@@ -1,0 +1,1082 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Franke CAN</title>
+<style>
+:root{
+  --bg:#f5f6f8;--panel:#fff;--text:#1d2330;--muted:#6b7385;--line:#dde1e8;
+  --accent:#2463d8;--ok:#1f8a4c;--warn:#b7791f;--bad:#c53030;--tx:#7b3fc4;--unk:#fff4d6;--row:#f9fafb;
+  --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#12151b;--panel:#1b1f27;--text:#e3e7ef;--muted:#8d95a7;--line:#2c323d;
+  --accent:#6b9cff;--ok:#4cc38a;--warn:#e0a84a;--bad:#ff6b6b;--tx:#b48cff;--unk:#3a3220;--row:#20252e;
+}}
+*{box-sizing:border-box}
+[hidden]{display:none !important}   /* .row etc. set display, which would otherwise override "hidden" */
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0 8px 0 0}
+.badge{padding:3px 9px;border-radius:12px;font-weight:600;font-size:12px;background:var(--line)}
+.badge.listen{background:#2463d822;color:var(--accent)}
+.badge.active{background:#1f8a4c22;color:var(--ok)}
+.badge.closed{background:#6b738522;color:var(--muted)}
+.badge.bad{background:#c5303022;color:var(--bad)}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--bad);display:inline-block}
+.dot.on{background:var(--ok)}
+.grow{flex:1}
+button,select,input,textarea{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 12px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+input[type=file]{padding:4px 8px 4px 4px;max-width:100%}
+input[type=file]::file-selector-button{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:4px 12px;margin-right:10px;cursor:pointer}
+input[type=file]::file-selector-button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.stop{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:700;padding:8px 18px}
+button.sel{outline:2px solid var(--accent)}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+textarea{width:100%;font-family:var(--mono)}
+nav{display:flex;gap:4px;padding:8px 16px 0;flex-wrap:wrap}
+nav button{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:none}
+nav button.cur{background:var(--accent);color:#fff;border-color:var(--accent)}
+main{padding:12px 16px}
+section{display:none}
+section.cur{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+.card h2{font-size:14px;margin:0 0 8px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+.tablewrap{overflow:auto;max-height:65vh;border:1px solid var(--line);border-radius:6px}
+table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12.5px}
+th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);font-family:system-ui,sans-serif;font-size:12px;color:var(--muted)}
+tr:nth-child(even) td{background:var(--row)}
+tr.unk td{background:var(--unk)}
+tr.tx td{color:var(--tx)}
+td.dec{white-space:normal;font-family:system-ui,sans-serif;min-width:200px}
+.muted{color:var(--muted)}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:4px 16px;font-family:var(--mono);font-size:12.5px}
+.kv div span{color:var(--muted)}
+#console{height:160px;overflow:auto;font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px;white-space:pre-wrap}
+.err{color:var(--bad)}.okc{color:var(--ok)}.note{color:var(--warn)}
+#toast{position:fixed;right:16px;bottom:16px;max-width:420px;display:flex;flex-direction:column;gap:6px;z-index:9}
+#toast div{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--warn);padding:8px 12px;border-radius:6px;box-shadow:0 2px 8px #0003}
+progress{width:260px}
+h3{font-size:13px;margin:12px 0 6px;display:flex;gap:8px;align-items:center}
+.netlist{border:1px solid var(--line);border-radius:6px;max-height:280px;overflow:auto}
+.net{display:flex;align-items:center;gap:10px;padding:7px 10px;border-bottom:1px solid var(--line)}
+.net:last-child{border-bottom:none}
+.net .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.net.cur .name{font-weight:700;color:var(--ok)}
+.net.click{cursor:pointer}.net.click:hover{background:var(--row)}
+details{margin-top:8px}
+.mono{font-family:var(--mono)}
+.ico{width:1.05em;height:1.05em;vertical-align:-0.17em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.sig{width:1.2em;height:1em;vertical-align:-0.1em;color:var(--accent);flex:none}
+#markDlg{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-start;justify-content:center;padding-top:12vh;z-index:20}
+#markDlg[hidden]{display:none}
+#markDlg .card{width:min(560px,calc(100vw - 32px));box-shadow:0 8px 30px #0005}
+tr.mark td{background:#2463d822 !important;color:var(--accent);font-weight:600}
+@media (max-width:600px){header h1{width:100%}main{padding:10px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Franke CAN</h1>
+  <span class="dot" id="conn" title="WebSocket"></span>
+  <span class="badge" id="mode">-</span>
+  <span class="badge bad" id="latch" hidden title="Emergency stop is latched: ACTIVE, sending and enabling rules are blocked until Resume">STOPPED (latched)</span>
+  <button id="btnResume" hidden title="Release the STOP latch (the bus stays in LISTEN)">Resume</button>
+  <span class="muted" id="hdrinfo"></span>
+  <span class="grow"></span>
+  <span class="muted" id="rate"></span>
+  <span class="muted mono" id="clock" title="device clock (UTC)"></span>
+  <button id="btnMark" title="Set a marker now (hotkey M)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg> Marker</button>
+  <button class="stop" id="btnStop" title="Emergency stop: LISTEN, rules off">STOP</button>
+</header>
+<div id="markDlg" hidden>
+  <div class="card">
+    <h2><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg> Marker <span class="mono" id="markTime"></span></h2>
+    <div class="row"><input id="markNote" placeholder="note (optional), e.g. coffee started" maxlength="140" style="flex:1" autocomplete="off"></div>
+    <div class="row"><button class="primary" id="btnMarkSave">Save (Enter)</button><button id="btnMarkDiscard">Discard (Esc)</button>
+      <span class="muted">time is taken at the button press</span></div>
+  </div>
+</div>
+<nav id="tabs">
+  <button data-t="live" class="cur">Live</button>
+  <button data-t="ids">IDs</button>
+  <button data-t="send">Control &amp; Send</button>
+  <button data-t="rules">Rules</button>
+  <button data-t="log">Log</button>
+  <button data-t="sys">System</button>
+</nav>
+<main>
+
+<section id="t-live" class="cur">
+  <div class="card">
+    <div class="row">
+      <input id="filter" placeholder="ID filter, e.g. 481,4C6 or !181" size="28">
+      <label><input type="checkbox" id="changes"> changes only</label>
+      <label><input type="checkbox" id="unkOnly"> unknown only</label>
+      <button id="btnPause">Pause</button>
+      <button id="btnClear">Clear</button>
+      <span class="muted" id="liveinfo"></span>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>time (UTC)</th><th>dir</th><th>ID</th><th>DLC</th><th>data</th><th>meaning</th></tr></thead>
+      <tbody id="liveBody"></tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="t-ids">
+  <div class="card">
+    <div class="row"><button id="btnIdsReset">Reset</button><span class="muted">per ID: count, interval (avg / min / max), last data</span></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>ID</th><th>count</th><th>avg ms</th><th>min ms</th><th>max ms</th><th>last data</th><th>meaning</th><th>age s</th></tr></thead>
+      <tbody id="idsBody"></tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="t-send">
+  <div class="card">
+    <h2>Bus mode</h2>
+    <div class="row">
+      <button data-mode="listen">LISTEN (no ACK, no TX)</button>
+      <button data-mode="active">ACTIVE (ACK, TX, rules)</button>
+      <button data-mode="closed">CLOSED</button>
+      <label><input type="checkbox" id="echo"> echo own frames</label>
+    </div>
+    <div class="muted">After every boot the device is in LISTEN. Rules and sending only work in ACTIVE.</div>
+  </div>
+  <div class="card">
+    <h2>Send frame</h2>
+    <div class="row">
+      <input id="sendFrame" placeholder="481#110027  or  481 11 00 27" size="30">
+      <button class="primary" id="btnSend">Send</button>
+      <label><input type="checkbox" id="repeat"> repeat every</label>
+      <input id="repeatMs" type="number" value="1000" min="20" style="width:90px"> ms
+    </div>
+    <div class="row" id="history"></div>
+  </div>
+</section>
+
+<section id="t-rules">
+  <div class="card">
+    <h2>Rules <span class="muted" id="rulesInfo"></span></h2>
+    <div class="row">
+      <button id="btnRulesRefresh">Refresh</button>
+      <button id="btnRulesEnAll">Enable all</button>
+      <button id="btnRulesDisAll">Disable all</button>
+      <button id="btnRulesSave">Save to flash</button>
+      <button id="btnRulesLoad">Load from flash</button>
+      <button id="btnRulesClear">Delete all</button>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>name</th><th>state</th><th>hits</th><th>definition</th><th></th></tr></thead>
+      <tbody id="rulesBody"></tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <h2>Add / replace rule</h2>
+    <div class="row"><input id="ruleName" placeholder="name" size="14">
+      <button data-ex="poll">Example: poll</button><button data-ex="anfr">Example: anfr</button></div>
+    <textarea id="ruleDef" rows="2" placeholder="match=481:11 00 27 send=400:00 01 09@1 send=480:00 01 28@3"></textarea>
+    <div class="row" style="margin-top:8px"><button class="primary" id="btnRuleAdd">Add</button>
+      <span class="muted">match=&lt;id&gt;[/&lt;mask&gt;]:&lt;bytes, ?? = any&gt; &nbsp; send=&lt;id&gt;:&lt;bytes, {b0}..{b7}&gt;[@ms] &nbsp; [dlc=n] [once]</span></div>
+  </div>
+</section>
+
+<section id="t-log">
+  <div class="card">
+    <h2>Recording (candump format)</h2>
+    <div class="row">
+      <button class="primary" id="btnRecStart">Start new recording</button>
+      <button id="btnRecStop" disabled>Stop</button>
+      <span id="recInfo" class="muted"></span>
+    </div>
+    <div class="muted">Records all received and (with echo on) sent frames as <code>(epoch) can0 ID#DATA</code>, readable by SavvyCAN, can-utils, python-can and <code>franke_can.py decode</code>. Markers go into a second file <code>….markers.txt</code> with the same timestamps. All times are UTC.
+      Recordings are saved continuously in this browser's storage: reloading or closing the page loses nothing, and a running recording continues after a reload (missed frames are fetched from the device; longer gaps are marked as <i>DATA GAP</i>).</div>
+    <h3>Markers in the current recording</h3>
+    <div class="tablewrap" style="max-height:30vh"><table><thead><tr><th>time (UTC)</th><th>note</th></tr></thead><tbody id="markBody"></tbody></table></div>
+  </div>
+  <div class="card">
+    <h2>Saved recordings <span class="muted" id="recStore"></span></h2>
+    <div class="tablewrap" style="max-height:45vh"><table>
+      <thead><tr><th>start (UTC)</th><th>duration</th><th>frames</th><th>markers</th><th>state</th><th></th></tr></thead>
+      <tbody id="recBody"></tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="t-sys">
+  <div class="card"><h2>Status</h2><div class="kv" id="statusKv"></div></div>
+  <div class="card"><h2>Statistics</h2><div class="kv" id="statsKv"></div>
+    <div class="row" style="margin-top:8px"><button id="btnStatsReset">Reset statistics</button></div></div>
+  <div class="card">
+    <h2>CAN settings</h2>
+    <div class="row">
+      Bitrate <select id="bitrate">
+        <option>10000</option><option>20000</option><option>50000</option><option>100000</option>
+        <option selected>125000</option><option>250000</option><option>500000</option><option>800000</option><option>1000000</option>
+      </select><button id="btnBitrate">Set</button>
+      &nbsp; TX limit <input id="limit" type="number" min="1" max="500" value="50" style="width:80px"> frames/s <button id="btnLimit">Set</button>
+      &nbsp; USB format <select id="usbfmt"><option value="slcan">SLCAN</option><option value="text">text (#rx, µs)</option></select><button id="btnFmt">Set</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>WLAN</h2>
+    <div class="row"><b id="wifiState">-</b><span id="wifiInfo" class="muted"></span></div>
+    <h3>Saved networks</h3>
+    <div class="netlist" id="wifiSaved"></div>
+    <h3>Available networks <button id="btnScan">Scan</button> <span id="scanInfo" class="muted"></span></h3>
+    <div class="netlist" id="wifiScan"><div class="net muted">press Scan to search for networks</div></div>
+    <div class="row" id="joinBox" hidden>
+      <b id="joinSsid"></b>
+      <input id="joinPass" type="password" placeholder="password" size="22" autocomplete="off">
+      <label><input type="checkbox" id="joinShow"> show</label>
+      <button class="primary" id="btnJoin">Connect</button><button id="btnJoinCancel">Cancel</button>
+    </div>
+    <details><summary class="muted">Hidden network</summary>
+      <div class="row" style="margin-top:6px"><input id="hidSsid" placeholder="SSID" size="20">
+        <input id="hidPass" type="password" placeholder="password" size="20"><button id="btnHid">Save &amp; connect</button></div>
+    </details>
+    <div class="muted" style="margin-top:6px">The access point <code>franke-can</code> (http://192.168.4.1) is always on. It shares the radio with the WLAN connection, so it moves to the WLAN's channel, and it may stall for 1–2 s while the device scans.</div>
+  </div>
+  <div class="card">
+    <h2>CAN transceiver pins</h2>
+    <div class="row">
+      CTX (TX) <select id="pinTx"></select>
+      CRX (RX) <select id="pinRx"></select>
+      <button id="btnPins">Apply</button>
+      <span class="muted" id="pinInfo"></span>
+    </div>
+    <div class="muted">Only pins that are safe for this chip are offered (no strapping pins, no pins that toggle during boot). Applying saves the pins and re-opens the bus in LISTEN.</div>
+  </div>
+  <div class="card">
+    <h2>Firmware update (OTA)</h2>
+    <div class="row">
+      <input type="file" id="fwFile" accept=".bin">
+      <button class="primary" id="btnFw">Upload &amp; flash</button>
+      <progress id="fwProg" max="100" value="0" hidden></progress>
+      <span id="fwInfo" class="muted"></span>
+    </div>
+    <div class="muted">File: <code>firmware/franke-can_&lt;board&gt;.bin</code> in the project folder (copied there by every build). The bus is switched to LISTEN before flashing; the page reloads by itself afterwards.</div>
+    <div class="row" style="margin-top:8px"><button id="btnReboot">Reboot device</button></div>
+  </div>
+  <div class="card">
+    <h2>Console</h2>
+    <div id="console"></div>
+    <div class="row" style="margin-top:8px;align-items:flex-start">
+      <textarea id="cmd" rows="1" placeholder="#help   |   several: #mode active; #send 481#110027; #stats" style="flex:1;resize:vertical"></textarea>
+      <button id="btnCmd">Send</button></div>
+    <div class="muted">Enter runs, Shift+Enter = new line, ↑/↓ = history. Separate commands with <code>;</code> or new lines; they run one after another and stop at the first <code>#err</code>. <code>;</code> inside "quotes" or as <code>\;</code> does not split.</div>
+  </div>
+</section>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+// line icons (SVG, current text color) - no emojis
+const svgIcon = body => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
+const ICON = {
+  pin: svgIcon('<path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/>'),
+  lock: svgIcon('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
+};
+const hex2 = v => v.toString(16).toUpperCase().padStart(2, "0");
+const idHex = (id, ext) => id.toString(16).toUpperCase().padStart(ext ? 8 : 3, "0");
+
+// ---------- known frames (same table as host/known_frames.py) ----------
+const FUNCS = {0x01:"milk pump 1",0x05:"Y42 air/milk",0x0B:"Y46 warm milk",0x0C:"Y45 temperature switch",
+  0x0D:"Y38 milk supply 1",0x10:"Y40 milk supply 2",0x11:"function 0x11 (unknown)",0xFF:"all off"};
+function decode(id, d) {
+  const p = arr => d.length >= arr.length && arr.every((v, i) => v === null || d[i] === v);
+  if (id === 0x481) {
+    if (p([0x12,0x46,0x55])) return "status poll → milk controller";
+    if (p([0x12,0x46,0x57])) {
+      if (d.length < 6) return "command → milk controller";
+      const onoff = d[4] === 1 ? "ON" : d[4] === 0 ? "OFF" : "EE=" + hex2(d[4]);
+      return `command: ${FUNCS[d[3]] || "function " + hex2(d[3])} ${onoff}, value ${d[5]} %`;
+    }
+    if (p([0x12,0x46,0x51])) return "query 0x51 → milk controller (meaning unknown)";
+    if (p([0x12,0x46,0x00])) return "init/reset milk controller (assumed)";
+    if (p([0x11,0x00,0x27])) return "poll → payment system";
+    if (p([0x11,0x00,0x21])) return "availability check → payment system (once per minute, also on screen change)";
+  }
+  if (id === 0x4C6) {
+    if (p([0x00,0x01,0x56]) && d.length >= 8) {
+      const pump = d[3] === 1 && d[4] === 0 ? "pump off" : d[3] === 2 && d[4] === 1 ? "pump running" : `SS PP=${hex2(d[3])} ${hex2(d[4])}`;
+      return `status reply: ${pump}, fridge ${d[7]} °C`;
+    }
+    if (p([0x00,0x01,0x58])) return `command acknowledged (${hex2(d[3] || 0)})`;
+    if (p([0x00,0x01,0x52])) return "reply to query 0x51";
+  }
+  if (id === 0x446 && p([0x00,0x01,0x09])) return "receipt ack from milk controller";
+  if (id === 0x401 && p([0x00,0x46,0x09])) return "receipt ack from coffee machine";
+  if (id === 0x181) {
+    if (p([0,0,3])) return "machine state 03";
+    if (p([0,0,1])) return "machine state 01 (ready)";
+    return "machine state";
+  }
+  if (id === 0x400) return "ack from node 0x00 (payment system)";
+  if (id === 0x480) return "message from node 0x00 (payment system)";
+  return null;
+}
+
+// ---------- connection & command handling ----------
+let ws = null, token = null, info = {}, connected = false;
+const waiting = [];      // pending command promises (FIFO, resolved by #ok / #err)
+let ruleRows = [];
+
+let pageUi = null, reloadOnReconnect = false;
+async function connect() {
+  try {
+    const r = await fetch("/api/token", {cache: "no-store"});
+    info = await r.json();
+    token = info.token;
+  } catch (e) { setTimeout(connect, 2000); return; }
+  // the device is back: reload if a firmware update was just flashed or the web UI changed
+  if (reloadOnReconnect || (pageUi !== null && info.ui && info.ui !== pageUi)) { location.reload(); return; }
+  if (pageUi === null) pageUi = info.ui || "";
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => ws.send("#auth " + token);
+  ws.onmessage = ev => { for (const l of ev.data.split(/[\r\n]+/)) if (l) onLine(l); };
+  ws.onclose = () => { setConn(false); while (waiting.length) waiting.shift().resolve("#err disconnected"); setTimeout(connect, 2000); };
+}
+
+function setConn(on) {
+  connected = on;
+  $("conn").classList.toggle("on", on);
+  $("hdrinfo").textContent = on ? `${info.board} fw ${info.fw}` : "disconnected";
+}
+
+function cmd(text, silent = false, timeoutMs = 4000) {
+  return new Promise(resolve => {
+    if (!ws || ws.readyState !== 1) { resolve("#err not connected"); return; }
+    const w = {resolve, silent, text, t: setTimeout(() => { const i = waiting.indexOf(w); if (i >= 0) waiting.splice(i, 1); resolve("#err timeout"); }, timeoutMs)};
+    waiting.push(w);
+    ws.send(text);
+    if (!silent) log("> " + text, "muted");
+  });
+}
+
+function onLine(l) {
+  if (l.startsWith("#rx ") || l.startsWith("#tx ")) { if (replay.active) replay.live.push(l); else onFrame(l); return; }
+  if (l.startsWith("#prx ") || l.startsWith("#ptx ")) { replay.frames.push(l); return; }
+  if (l.startsWith("#pmsg ")) { replay.msgs.push(l); return; }
+  if (l.startsWith("#replay ")) { const g = l.match(/^#replay gap (\d+) (\d+)/); if (g) replay.gap = [+g[1], +g[2]]; return; }
+  if (l === "#ok auth") { setConn(true); refreshAll(); afterConnect(); return; }
+  if (l.startsWith("#time ")) { onTime(l); return; }
+  if (l.startsWith("#mark ")) { const m = l.match(/^#mark (\d+) (\d+) ?(.*)$/); if (m) onMark(+m[1], +m[2], m[3]); return; }
+  if (l.startsWith("#clock ")) { log(l, "okc"); syncClock(); return; }
+  if (l === "#err auth") { log("authentication failed", "err"); return; }
+  if (l.startsWith("#hello")) return;
+  if (l.startsWith("#status ")) { onStatus(kv(l)); return; }
+  if (l.startsWith("#stats ")) { onStats(kv(l)); return; }
+  if (l.startsWith("#rule ")) { ruleRows.push(l); return; }
+  if (l.startsWith("#wifistate ")) { onWifiState(l); return; }
+  if (l.startsWith("#wifisaved ")) { const m = l.match(/^#wifisaved (\d) (.*)$/); if (m) wifiSaved.push({cur: m[1] === "1", ssid: m[2]}); return; }
+  if (l.startsWith("#wifinet ")) {
+    const m = l.match(/^#wifinet (-?\d+) (\d+) (\S+) (\d) (.*)$/);
+    if (m) wifiNets.push({rssi: +m[1], ch: +m[2], secured: m[3] === "secured", saved: m[4] === "1", ssid: m[5]});
+    return;
+  }
+  if (l.startsWith("#pins ")) { onPins(kv(l)); return; }
+  if (l.startsWith("#ok") || l.startsWith("#err") || l === "z" || l === "Z") {
+    const w = waiting.shift();
+    if (w) { clearTimeout(w.t); if (!w.silent || l.startsWith("#err")) log(l, l.startsWith("#err") ? "err" : "okc"); w.resolve(l); }
+    else log(l, l.startsWith("#err") ? "err" : "okc");
+    if (l.startsWith("#ok rule list")) renderRules(l);
+    return;
+  }
+  // asynchronous notifications
+  const important = /^#(stop|resume|busoff|busrecovered|ota|wifi|warn|txerr|error|boot)/.test(l);
+  log(l, important ? "note" : "");
+  if (important) toast(l);
+  if (l.startsWith("#wifi ") && curTab === "sys") setTimeout(refreshWifi, 300);
+  if (/^#(stop|resume|busoff|busrecovered|boot)/.test(l)) setTimeout(() => { cmd("#status", true); cmd("#rule list", true); }, 300);
+}
+
+function kv(line) {
+  const o = {};
+  for (const tok of line.split(" ").slice(1)) { const i = tok.indexOf("="); if (i > 0) o[tok.slice(0, i)] = tok.slice(i + 1); }
+  return o;
+}
+
+// ---------- status ----------
+let status = {};
+function onStatus(s) {
+  status = s;
+  const m = $("mode");
+  m.textContent = (s.busoff === "yes" ? "BUS-OFF" : (s.mode || "-").toUpperCase());
+  m.className = "badge " + (s.busoff === "yes" ? "bad" : s.mode);
+  document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("sel", b.dataset.mode === s.mode));
+  const latched = s.stop_latch === "1";
+  $("latch").hidden = !latched; $("btnResume").hidden = !latched;
+  if (latched) $("latch").textContent = `STOPPED (latched${+s.stops > 1 ? ", " + s.stops + "×" : ""})`;
+  $("echo").checked = s.echo === "on";
+  $("statusKv").innerHTML = Object.entries(s).map(([k, v]) => `<div><span>${esc(k)}</span> ${esc(v)}</div>`).join("");
+  if (s.limit && document.activeElement !== $("limit")) $("limit").value = parseInt(s.limit);
+  if (s.bitrate && document.activeElement !== $("bitrate")) $("bitrate").value = s.bitrate;
+  if (s.format) $("usbfmt").value = s.format;
+}
+function onStats(s) {
+  $("statsKv").innerHTML = Object.entries(s).map(([k, v]) => `<div><span>${esc(k)}</span> ${esc(v)}</div>`).join("");
+}
+function refreshAll() { cmd("#status", true); cmd("#stats", true); cmd("#rule list", true); }
+let tick = 0;
+setInterval(() => {
+  if (!connected) return;
+  cmd("#status", true);
+  if (curTab === "sys") { cmd("#stats", true); if (++tick % 3 === 0 && !scanning) refreshWifi(); }
+}, 2000);
+
+// ---------- frames ----------
+// ---------- clock (all wall-clock times are UTC) ----------
+// The device sends µs since boot. "#time" gives boot_us + epoch_us from the device clock (NTP or set by a
+// client), so every client maps timestamps the same way, independent of network latency.
+const clk = {epochOff: null, src: "none", boot: 0, perf: 0};
+function onTime(l) {
+  const t = l.split(" ");
+  const boot = Number(t[1]), epoch = Number(t[2]);
+  clk.boot = boot; clk.perf = performance.now(); clk.src = t[3] || "none";
+  clk.epochOff = epoch > 0 ? epoch - boot : null;
+}
+async function syncClock() {
+  await cmd("#time", true);
+  if (clk.src === "none") { await cmd("#time set " + Date.now(), true); await cmd("#time", true); }   // no NTP: use this browser's clock
+}
+setInterval(() => { if (connected) syncClock(); }, 60000);
+const devNowUs = () => clk.perf ? clk.boot + (performance.now() - clk.perf) * 1000 : lastDevUs;
+function wallOf(us) { return clk.epochOff !== null ? (us + clk.epochOff) / 1e6 : (us + (devOffsetUs || 0)) / 1e6; }
+function isoUtc(sec) {   // 2026-11-06T15:12:03.123456Z
+  const total = Math.round(sec * 1e6), ms = Math.floor(total / 1000), us = total - ms * 1000;
+  return new Date(ms).toISOString().slice(0, 23) + String(us).padStart(3, "0") + "Z";
+}
+const utcTime = sec => isoUtc(sec).slice(11, 26);   // 15:12:03.123456
+setInterval(() => {
+  $("clock").textContent = !connected ? "" : clk.epochOff !== null
+    ? `${utcTime(wallOf(devNowUs())).slice(0, 8)} UTC · ${clk.src}` : "clock not set";
+}, 500);
+
+// ---------- markers ----------
+let markPressUs = null;
+const recMarks = [];
+function openMark() {
+  if (!connected) { toast("not connected"); return; }
+  markPressUs = Math.round(devNowUs());   // time of the press, in device time
+  $("markTime").textContent = utcTime(wallOf(markPressUs)).slice(0, 12) + " UTC";
+  $("markNote").value = ""; $("markDlg").hidden = false; $("markNote").focus();
+}
+async function saveMark() {
+  if (markPressUs === null) return;
+  const note = $("markNote").value.trim(), t = markPressUs;
+  markPressUs = null; $("markDlg").hidden = true;
+  const r = await cmd(`#mark @${t} ${note}`, true);
+  if (r.startsWith("#err")) toast("marker not saved: " + r);
+}
+function discardMark() { markPressUs = null; $("markDlg").hidden = true; }
+const seenMarks = new Set();   // a marker can arrive live and again from the replay buffer
+function onMark(boot, epoch, note, wallOverride) {
+  const key = boot + "|" + note;
+  if (seenMarks.has(key)) return;
+  seenMarks.add(key);
+  const mk = {mark: true, us: boot, wall: wallOverride || (epoch > 0 ? epoch / 1e6 : wallOf(boot)), note};
+  let i = live.length;   // insert at the right time position
+  while (i > 0 && live[i - 1].us > boot) i--;
+  live.splice(i, 0, mk); liveDirty = true;
+  if (REC.cur) { recMarks.push(mk); renderMarks(); recAddMark(mk); }
+  log(`marker ${utcTime(mk.wall).slice(0, 12)} UTC ${note}`, "note");
+  toast(`Marker ${utcTime(mk.wall).slice(0, 12)} UTC ${note || "(no note)"}`);
+}
+// marker created by this page (not sent to the device), e.g. DATA GAP notes
+function localMarker(us, wall, note) { onMark(us, 0, note, wall); }
+function renderMarks() {
+  $("markBody").innerHTML = recMarks.map(m => `<tr><td>${isoUtc(m.wall)}</td><td class="dec">${esc(m.note || "")}</td></tr>`).join("")
+    || '<tr><td colspan="2" class="muted">none</td></tr>';
+}
+$("btnMark").onclick = openMark;
+$("btnMarkSave").onclick = saveMark;
+$("btnMarkDiscard").onclick = discardMark;
+$("markNote").onkeydown = e => { if (e.key === "Enter") saveMark(); else if (e.key === "Escape") discardMark(); };
+document.addEventListener("keydown", e => {
+  const tag = (e.target.tagName || "").toLowerCase();
+  if ((e.key === "m" || e.key === "M") && !e.ctrlKey && !e.altKey && !e.metaKey && $("markDlg").hidden &&
+      !["input", "textarea", "select"].includes(tag)) { e.preventDefault(); openMark(); }
+});
+
+let devOffsetUs = null, offsetSamples = 0, lastDevUs = 0;
+const live = [];            // ring of frame objects
+const LIVE_MAX = 3000;
+const ids = new Map();
+const lastData = new Map();
+let paused = false, liveDirty = false, frameCount = 0, rateCount = 0;
+
+// ---------- recordings: stored continuously in the browser (IndexedDB) ----------
+// Each recording = meta record + text chunks ("log" lines in candump format, "mark" lines).
+// Flushed every second, so a reload / crash loses at most ~1 s; a running recording continues
+// after a reload (missed frames come from the device's replay buffer).
+const REC = {db: null, cur: null, lines: [], marks: [], mem: {}, alive: 0};
+const TAB_ID = Math.random().toString(36).slice(2);
+function idbOpen() {
+  return new Promise(res => {
+    try {
+      const r = indexedDB.open("franke-can-rec", 1);
+      r.onupgradeneeded = () => {
+        const d = r.result;
+        d.createObjectStore("recs", {keyPath: "id"});
+        d.createObjectStore("chunks", {autoIncrement: true}).createIndex("rec", "rec");
+      };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => res(null);
+    } catch (e) { res(null); }
+  });
+}
+function idb(stores, mode, fn) {
+  return new Promise((res, rej) => {
+    const t = REC.db.transaction(stores, mode);
+    const out = fn(t);
+    t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
+  });
+}
+async function recPutMeta(m) {
+  if (REC.db) await idb("recs", "readwrite", t => t.objectStore("recs").put(m));
+  else REC.mem[m.id] = Object.assign(REC.mem[m.id] || {log: [], mark: []}, {meta: m});
+}
+async function recAllMeta() {
+  if (REC.db) return await idb("recs", "readonly", t => t.objectStore("recs").getAll());
+  return Object.values(REC.mem).map(x => x.meta);
+}
+async function recChunks(id, kind) {
+  if (!REC.db) return (REC.mem[id] || {})[kind] || [];
+  const all = await idb("chunks", "readonly", t => t.objectStore("chunks").index("rec").getAll(id));
+  return all.filter(c => c.kind === kind).map(c => c.text);
+}
+function recAddLine(line, us) {
+  REC.lines.push(line);
+  REC.cur.frames++; REC.cur.lastUs = us;
+}
+function recAddMark(mk) {
+  REC.marks.push(`(${mk.wall.toFixed(6)}) ${isoUtc(mk.wall)} ${mk.note || ""}`.trimEnd());
+  REC.cur.marks++;
+  if (REC.cur.lastUs < mk.us) REC.cur.lastUs = mk.us;
+}
+let recFlushing = false;
+async function recFlush() {
+  if (!REC.cur || recFlushing) return;
+  recFlushing = true;
+  try {
+    const m = REC.cur, lines = REC.lines, marks = REC.marks;
+    REC.lines = []; REC.marks = [];
+    m.alive = Date.now(); m.tab = TAB_ID; m.epochOff = clk.epochOff;
+    if (clk.epochOff !== null || devOffsetUs !== null) m.end = wallOf(m.lastUs || devNowUs());
+    if (REC.db) {
+      await idb(["recs", "chunks"], "readwrite", t => {
+        const c = t.objectStore("chunks");
+        if (lines.length) c.add({rec: m.id, kind: "log", text: lines.join("\n") + "\n"});
+        if (marks.length) c.add({rec: m.id, kind: "mark", text: marks.join("\n") + "\n"});
+        t.objectStore("recs").put(m);
+      });
+    } else {
+      const e = REC.mem[m.id] || (REC.mem[m.id] = {log: [], mark: [], meta: m});
+      if (lines.length) e.log.push(lines.join("\n") + "\n");
+      if (marks.length) e.mark.push(marks.join("\n") + "\n");
+    }
+  } catch (e) { toast("could not save recording data: " + e); }
+  finally { recFlushing = false; }
+}
+setInterval(recFlush, 1000);
+window.addEventListener("pagehide", () => { recFlush(); });
+
+async function recStart() {
+  if (REC.cur) return;   // only one recording at a time; old ones are never touched
+  const startWall = clk.epochOff !== null ? wallOf(devNowUs()) : Date.now() / 1000;
+  REC.cur = {id: String(Date.now()) + "-" + TAB_ID, start: startWall, end: startWall, frames: 0, marks: 0,
+             state: "recording", lastUs: Math.round(devNowUs()), epochOff: clk.epochOff, alive: Date.now(), tab: TAB_ID};
+  REC.lines = []; REC.marks = [];
+  recMarks.length = 0; renderMarks();
+  await recPutMeta(REC.cur);
+  recUpdateButtons(); recRenderList();
+}
+async function recStop() {
+  if (!REC.cur) return;
+  await recFlush();
+  const m = REC.cur;
+  REC.cur = null;
+  m.state = "stopped"; m.alive = 0;
+  await recPutMeta(m);
+  recUpdateButtons(); recRenderList();
+  toast(`Recording saved: ${m.frames} frames, ${m.marks} markers`);
+}
+function recBase(m) { return "can_" + new Date(m.start * 1000).toISOString().slice(0, 19).replace("T", "_").replace(/:/g, "-") + "Z"; }
+async function recDownload(id, kind) {
+  if (REC.cur && REC.cur.id === id) await recFlush();
+  const m = (await recAllMeta()).find(x => x.id === id); if (!m) return;
+  let parts = await recChunks(id, kind);
+  if (kind === "mark") {   // markers may arrive out of order (replay) -> sort by timestamp
+    const lines = parts.join("").split("\n").filter(Boolean);
+    lines.sort((a, b) => parseFloat(a.slice(1)) - parseFloat(b.slice(1)));
+    parts = lines.length ? [lines.join("\n") + "\n"] : [];
+    if (!parts.length) { toast("this recording has no markers"); return; }
+  }
+  download(recBase(m) + (kind === "log" ? ".log" : ".markers.txt"), parts.join(""));
+}
+async function recDelete(id) {
+  if (REC.cur && REC.cur.id === id) { toast("stop the recording before deleting it"); return; }
+  const m = (await recAllMeta()).find(x => x.id === id); if (!m) return;
+  if (!confirm(`Delete recording ${isoUtc(m.start).slice(0, 19)}Z (${m.frames} frames, ${m.marks} markers)?\nThis cannot be undone.`)) return;
+  if (REC.db) {
+    await idb(["recs", "chunks"], "readwrite", t => {
+      t.objectStore("recs").delete(id);
+      const req = t.objectStore("chunks").index("rec").openKeyCursor(IDBKeyRange.only(id));
+      req.onsuccess = () => { const c = req.result; if (c) { t.objectStore("chunks").delete(c.primaryKey); c.continue(); } };
+    });
+  } else delete REC.mem[id];
+  recRenderList();
+}
+function fmtDur(s) { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return h ? `${h} h ${m} min` : m ? `${m} min ${s % 60} s` : `${s} s`; }
+async function recRenderList() {
+  const list = (await recAllMeta()).sort((a, b) => b.start - a.start);
+  $("recBody").innerHTML = list.map(m => {
+    const cur = REC.cur && REC.cur.id === m.id;
+    const other = !cur && m.state === "recording" && Date.now() - (m.alive || 0) < 5000;
+    const state = cur ? '<b class="okc">recording</b>' : other ? "recording (other tab)" : esc(m.state);
+    return `<tr><td>${isoUtc(m.start).slice(0, 19)}Z</td><td>${fmtDur((m.end || m.start) - m.start)}</td><td>${m.frames}</td><td>${m.marks}</td><td>${state}</td>
+      <td><button data-dl="${esc(m.id)}">.log</button> <button data-dm="${esc(m.id)}"${m.marks ? "" : " disabled"}>.markers.txt</button>
+      <button data-del="${esc(m.id)}"${cur || other ? " disabled" : ""}>Delete</button></td></tr>`;
+  }).join("") || '<tr><td colspan="6" class="muted">no recordings yet</td></tr>';
+  let info = REC.db ? "stored in this browser" : "browser storage unavailable - kept in memory only, download before closing!";
+  try { if (navigator.storage && navigator.storage.estimate) { const e = await navigator.storage.estimate(); info += ` · ${(e.usage / 1048576).toFixed(1)} MB used`; } } catch (e) {}
+  $("recStore").textContent = info;
+}
+$("recBody").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.dl) recDownload(b.dataset.dl, "log");
+  else if (b.dataset.dm) recDownload(b.dataset.dm, "mark");
+  else if (b.dataset.del) recDelete(b.dataset.del);
+};
+function recUpdateButtons() {
+  $("btnRecStart").disabled = !!REC.cur;
+  $("btnRecStop").disabled = !REC.cur;
+}
+$("btnRecStart").onclick = recStart;
+$("btnRecStop").onclick = recStop;
+setInterval(() => {
+  $("recInfo").textContent = REC.cur
+    ? `recording: ${REC.cur.frames} frames, ${REC.cur.marks} markers, ${fmtDur((REC.cur.end || REC.cur.start) - REC.cur.start)}` : "";
+}, 1000);
+async function recInit() {
+  REC.db = await idbOpen();
+  // a recording that was running when the page was closed / reloaded continues here,
+  // unless another tab is still writing to it (heartbeat younger than 5 s)
+  for (const m of await recAllMeta()) {
+    if (m.state !== "recording") continue;
+    if (Date.now() - (m.alive || 0) < 5000 && m.tab !== TAB_ID) continue;
+    if (!REC.cur) { REC.cur = m; toast(`Recording from ${isoUtc(m.start).slice(11, 19)} UTC continues`); }
+    else { m.state = "interrupted"; await recPutMeta(m); }
+  }
+  if (REC.cur) { recMarks.length = 0; renderMarks(); }
+  recUpdateButtons(); recRenderList();
+}
+
+// ---------- replay after reconnect: fetch frames that were missed while disconnected ----------
+const replay = {active: false, live: [], frames: [], msgs: [], gap: null};
+const sinceUs = () => Math.max(lastDevUs, REC.cur ? (REC.cur.lastUs || 0) : 0);
+async function afterConnect() {
+  const since = sinceUs();
+  replay.active = since > 0;   // buffer live frames until the replay is done (keeps the log in time order)
+  replay.live = [];
+  await syncClock();
+  if (since > 0) {
+    const oldOff = REC.cur && REC.cur.epochOff !== undefined ? REC.cur.epochOff : clk.epochOff;
+    const rebooted = clk.boot < since ||
+      (oldOff !== null && oldOff !== undefined && clk.epochOff !== null && Math.abs(oldOff - clk.epochOff) > 5e6);
+    if (rebooted) {
+      const fromWall = oldOff !== null && oldOff !== undefined ? (since + oldOff) / 1e6 : null;
+      if (REC.cur) localMarker(0, fromWall || wallOf(devNowUs()),
+        `DATA GAP: device restarted - no data from ${fromWall ? isoUtc(fromWall) : "?"} until ${isoUtc(wallOf(devNowUs()))}`);
+      lastDevUs = 0;
+    } else {
+      await doReplay(since);
+    }
+  }
+  replay.active = false;
+  const live = replay.live; replay.live = [];
+  for (const l of live) onFrame(l);
+}
+async function doReplay(since) {
+  replay.frames = []; replay.msgs = []; replay.gap = null;
+  const r = await cmd("#replay " + since, true, 20000);
+  if (!r.startsWith("#ok")) { if (REC.cur) localMarker(since, wallOf(since), `DATA GAP: missed data could not be fetched (${r})`); return; }
+  const firstLive = replay.live.length ? Number(replay.live[0].split(" ")[1]) : Infinity;
+  if (replay.gap && REC.cur)
+    localMarker(replay.gap[0], wallOf(replay.gap[0]), `DATA GAP: no data from ${isoUtc(wallOf(replay.gap[0]))} to ${isoUtc(wallOf(replay.gap[1]))} (device buffer too small)`);
+  let n = 0;
+  for (const l of replay.frames) {
+    const us = Number(l.split(" ")[1]);
+    if (us > since && us < firstLive) { onFrame("#" + l.slice(2)); n++; }   // "#prx ..." -> "#rx ..."
+  }
+  for (const l of replay.msgs) {
+    const m = l.match(/^#pmsg (\d+) (.*)$/); if (!m) continue;
+    if (m[2].startsWith("#mark ")) onLine(m[2]);   // duplicates are ignored by onMark
+    else log("[while disconnected] " + m[2], "note");
+  }
+  if (n) log(`recovered ${n} frames from the device buffer`, "okc");
+}
+
+function onFrame(l) {
+  const t = l.split(" ");
+  const tx = t[0] === "#tx";
+  const us = Number(t[1]);
+  const id = parseInt(t[2], 16), ext = t[2].length > 3, dlc = parseInt(t[3]);
+  const rtr = t[4] === "R";
+  const data = rtr ? [] : t.slice(4, 4 + dlc).map(x => parseInt(x, 16));
+  const reason = tx ? t.slice(4 + (rtr ? 1 : dlc)).join(" ") : "";
+  // map device time (µs since boot) to wall clock: minimum offset over the first frames
+  const nowUs = Date.now() * 1000;
+  if (us < lastDevUs) { devOffsetUs = null; offsetSamples = 0; syncClock(); }   // device rebooted
+  lastDevUs = us;
+  // fallback mapping if the device clock is not set yet: minimum offset over the first frames
+  if (devOffsetUs === null || (offsetSamples < 200 && nowUs - us < devOffsetUs)) devOffsetUs = nowUs - us;
+  offsetSamples++;
+  const f = {us, wall: wallOf(us), tx, id, ext, dlc, rtr, data, reason};
+  f.key = (tx ? "T" : "R") + t[2];
+  f.dec = decode(id, data);
+  frameCount++; rateCount++;
+
+  if (REC.cur) recAddLine(`(${f.wall.toFixed(6)}) can0 ${idHex(id, ext)}#${rtr ? "R" : data.map(hex2).join("")}`, us);
+
+  if (!tx) {
+    let s = ids.get(t[2]);
+    if (!s) { s = {id, ext, count: 0, last: 0, sum: 0, n: 0, min: Infinity, max: 0}; ids.set(t[2], s); }
+    if (s.count > 0) { const dt = (us - s.last) / 1000; s.sum += dt; s.n++; s.min = Math.min(s.min, dt); s.max = Math.max(s.max, dt); }
+    s.count++; s.last = us; s.data = data; s.dec = f.dec; s.wall = f.wall;
+  }
+  const dstr = data.join(",");
+  f.changed = lastData.get(f.key) !== dstr;
+  lastData.set(f.key, dstr);
+  if (!paused) { live.push(f); if (live.length > LIVE_MAX) live.splice(0, live.length - LIVE_MAX); liveDirty = true; }
+}
+
+function parseFilter() {
+  const inc = new Set(), exc = new Set();
+  for (const p of $("filter").value.split(/[ ,;]+/).filter(Boolean)) {
+    if (p.startsWith("!")) exc.add(parseInt(p.slice(1), 16)); else inc.add(parseInt(p, 16));
+  }
+  return f => (!inc.size || inc.has(f.id)) && !exc.has(f.id);
+}
+
+function renderLive() {
+  if (!liveDirty || curTab !== "live") return;
+  liveDirty = false;
+  const flt = parseFilter(), changes = $("changes").checked, unk = $("unkOnly").checked;
+  const rows = [];
+  for (let i = live.length - 1; i >= 0 && rows.length < 250; i--) {
+    const f = live[i];
+    if (f.mark) {
+      rows.push(`<tr class="mark"><td>${utcTime(f.wall)}</td><td colspan="5">${ICON.pin} ${esc(f.note || "marker")}</td></tr>`);
+      continue;
+    }
+    if (!flt(f) || (changes && !f.changed) || (unk && f.dec)) continue;
+    const cls = f.tx ? "tx" : (f.dec ? "" : "unk");
+    rows.push(`<tr class="${cls}"><td>${clk.epochOff !== null ? utcTime(f.wall) : (f.us / 1e6).toFixed(6)}</td><td>${f.tx ? "TX" : "RX"}</td><td>${idHex(f.id, f.ext)}</td><td>${f.dlc}</td><td>${f.rtr ? "RTR" : f.data.map(hex2).join(" ")}</td><td class="dec">${esc(f.dec || (f.tx ? "" : "unknown"))}${f.reason ? ` <span class="muted">[${esc(f.reason)}]</span>` : ""}</td></tr>`);
+  }
+  $("liveBody").innerHTML = rows.join("");
+  $("liveinfo").textContent = `${frameCount} frames${paused ? " (paused)" : ""}`;
+}
+
+function renderIds() {
+  if (curTab !== "ids") return;
+  const now = lastDevUs;
+  const rows = [...ids.entries()].sort((a, b) => a[1].id - b[1].id).map(([k, s]) => {
+    const avg = s.n ? (s.sum / s.n).toFixed(1) : "-";
+    return `<tr class="${s.dec ? "" : "unk"}"><td>${k}</td><td>${s.count}</td><td>${avg}</td><td>${s.n ? s.min.toFixed(1) : "-"}</td><td>${s.n ? s.max.toFixed(1) : "-"}</td><td>${s.data.map(hex2).join(" ")}</td><td class="dec">${esc(s.dec || "unknown")}</td><td>${((now - s.last) / 1e6).toFixed(1)}</td></tr>`;
+  });
+  $("idsBody").innerHTML = rows.join("");
+}
+
+setInterval(renderLive, 100);
+setInterval(renderIds, 300);
+setInterval(() => { $("rate").textContent = connected ? `${rateCount} frames/s` : ""; rateCount = 0; }, 1000);
+
+// ---------- rules ----------
+function renderRules(okLine) {
+  const rows = ruleRows.map(l => {
+    const m = l.match(/^#rule (\S+) (\S+) hits=(\d+) (.*)$/);
+    if (!m) return "";
+    const [, name, st, hits, def] = m;
+    const en = st !== "off";
+    return `<tr><td>${esc(name)}</td><td class="${en ? "okc" : "muted"}">${esc(st)}</td><td>${hits}</td><td>${esc(def)}</td>
+      <td><button data-r="${esc(name)}" data-a="${en ? "disable" : "enable"}">${en ? "Disable" : "Enable"}</button>
+      <button data-r="${esc(name)}" data-a="edit">Edit</button>
+      <button data-r="${esc(name)}" data-a="del">Delete</button></td></tr>`;
+  });
+  ruleRows.forEach(l => { const m = l.match(/^#rule (\S+) \S+ hits=\d+ (.*)$/); if (m) ruleDefs[m[1]] = m[2]; });
+  ruleRows = [];
+  $("rulesBody").innerHTML = rows.join("") || `<tr><td colspan="5" class="muted">no rules</td></tr>`;
+  $("rulesInfo").textContent = okLine.replace("#ok rule list", "").trim();
+}
+const ruleDefs = {};
+$("rulesBody").addEventListener("click", async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const name = b.dataset.r, a = b.dataset.a;
+  if (a === "edit") { $("ruleName").value = name; $("ruleDef").value = ruleDefs[name] || ""; return; }
+  if (a === "del" && !confirm(`Delete rule ${name}?`)) return;
+  await cmd(`#rule ${a} ${name}`);
+  cmd("#rule list", true);
+});
+const EXAMPLES = {
+  poll: "match=481:11 00 27 send=400:00 01 09@1 send=480:00 01 28@3",
+  anfr: "match=481:11 00 21 send=400:00 01 09@1 send=480:00 01 22@3",
+};
+document.querySelectorAll("[data-ex]").forEach(b => b.onclick = () => { $("ruleName").value = b.dataset.ex; $("ruleDef").value = EXAMPLES[b.dataset.ex]; });
+$("btnRuleAdd").onclick = async () => {
+  const n = $("ruleName").value.trim(), d = $("ruleDef").value.trim().replace(/\s+/g, " ");
+  if (!n || !d) return;
+  const r = await cmd(`#rule add ${n} ${d}`);
+  if (r.startsWith("#ok")) cmd("#rule list", true); else toast(r);
+};
+$("btnRulesRefresh").onclick = () => cmd("#rule list", true);
+$("btnRulesEnAll").onclick = async () => { await cmd("#rule enable all"); cmd("#rule list", true); };
+$("btnRulesDisAll").onclick = async () => { await cmd("#rule disable all"); cmd("#rule list", true); };
+$("btnRulesSave").onclick = () => cmd("#rule save");
+$("btnRulesLoad").onclick = async () => { await cmd("#rule load"); cmd("#rule list", true); };
+$("btnRulesClear").onclick = async () => { if (confirm("Delete all rules (RAM)?")) { await cmd("#rule clear"); cmd("#rule list", true); } };
+
+// ---------- control & send ----------
+$("btnStop").onclick = () => cmd("#stop").then(() => { cmd("#status", true); cmd("#rule list", true); });
+$("btnResume").onclick = async () => {
+  if (!confirm("Release the STOP latch?\nScripts and you can then switch to ACTIVE and enable rules again. The bus stays in LISTEN for now.")) return;
+  await cmd("#resume"); cmd("#status", true);
+};
+document.querySelectorAll("[data-mode]").forEach(b => b.onclick = async () => {
+  const m = b.dataset.mode;
+  if (m === "active" && !confirm("Switch to ACTIVE?\nThe ESP32 will acknowledge frames and may transmit on the machine's bus.")) return;
+  const r = await cmd("#mode " + m); if (r.startsWith("#err")) toast(r); cmd("#status", true);
+});
+$("echo").onchange = () => cmd("#echo " + ($("echo").checked ? "on" : "off"));
+const history = [];
+async function sendOnce() {
+  const f = $("sendFrame").value.trim(); if (!f) return;
+  const r = await cmd("#send " + f, $("repeat").checked);
+  if (r.startsWith("#err")) { $("repeat").checked = false; toast(r); return; }
+  if (!history.includes(f)) { history.unshift(f); history.length = Math.min(history.length, 10); renderHistory(); }
+}
+function renderHistory() {
+  $("history").innerHTML = history.map(h => `<button data-h="${esc(h)}">${esc(h)}</button>`).join("");
+}
+$("history").onclick = e => { const b = e.target.closest("button"); if (b) { $("sendFrame").value = b.dataset.h; sendOnce(); } };
+$("btnSend").onclick = sendOnce;
+$("sendFrame").onkeydown = e => { if (e.key === "Enter") sendOnce(); };
+let repeatTimer = null;
+$("repeat").onchange = () => {
+  clearInterval(repeatTimer);
+  if ($("repeat").checked) repeatTimer = setInterval(() => { if ($("repeat").checked) sendOnce(); else clearInterval(repeatTimer); }, Math.max(20, +$("repeatMs").value));
+};
+
+// ---------- downloads ----------
+function download(name, text) {
+  const blob = new Blob([text], {type: "text/plain"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ---------- system ----------
+$("btnStatsReset").onclick = async () => { await cmd("#stats reset"); cmd("#stats", true); };
+$("btnBitrate").onclick = () => cmd("#bitrate " + $("bitrate").value);
+$("btnLimit").onclick = () => cmd("#limit " + $("limit").value);
+$("btnFmt").onclick = () => cmd("#format " + $("usbfmt").value);
+$("btnReboot").onclick = () => { if (confirm("Reboot the device? It comes back in LISTEN mode.")) cmd("#reboot"); };
+// ---------- WLAN (phone-like) ----------
+let wifiSaved = [], wifiNets = [], scanning = false;
+const q = s => '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function bars(rssi) {   // signal strength as 4 bars (SVG), filled according to RSSI
+  const n = rssi > -55 ? 4 : rssi > -67 ? 3 : rssi > -75 ? 2 : 1;
+  const r = [0, 1, 2, 3].map(i => `<rect x="${i * 5 + 1}" y="${14 - (i + 1) * 3.25}" width="3.5" height="${(i + 1) * 3.25}" rx="0.8" fill="currentColor" opacity="${i < n ? 1 : 0.25}"/>`).join("");
+  return `<svg class="sig" viewBox="0 0 20 14" role="img" aria-label="signal ${n} of 4"><title>${rssi} dBm</title>${r}</svg>`;
+}
+function onWifiState(l) {
+  const m = l.match(/^#wifistate (\S+) (\S+) (\S+) (.*)$/); if (!m) return;
+  const [, st, rssi, ip, ssid] = m;
+  $("wifiState").textContent = st === "connected" ? `Connected to ${ssid}` : st === "connecting" ? `Connecting to ${ssid}…`
+    : st === "scanning" ? "Searching…" : st === "unconfigured" ? "No network saved" : "Not connected";
+  $("wifiInfo").textContent = st === "connected" ? `${ip}  ${rssi} dBm` : "";
+}
+async function refreshWifi() {
+  wifiSaved = [];
+  const r = await cmd("#wifi", true);
+  if (!r.startsWith("#ok")) return;
+  const box = $("wifiSaved");
+  box.innerHTML = wifiSaved.length ? wifiSaved.map(n => `<div class="net${n.cur ? " cur" : ""}">
+      <span class="name">${esc(n.ssid)}</span>${n.cur ? '<span class="okc">connected</span>' : `<button data-c="${esc(n.ssid)}">Connect</button>`}
+      <button data-d="${esc(n.ssid)}">Delete</button></div>`).join("")
+    : '<div class="net muted">no saved networks</div>';
+}
+$("wifiSaved").onclick = async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.c !== undefined) { await cmd("#wifi connect " + q(b.dataset.c)); }
+  else if (b.dataset.d !== undefined) { if (!confirm(`Forget network "${b.dataset.d}"?`)) return; await cmd("#wifi del " + q(b.dataset.d)); }
+  setTimeout(refreshWifi, 500);
+};
+async function scan() {
+  if (scanning) return;
+  scanning = true; $("scanInfo").textContent = "scanning…";
+  try {
+    let r = await cmd("#wifi scan", true);
+    if (r.startsWith("#err")) { $("scanInfo").textContent = r; return; }
+    for (let i = 0; i < 25; i++) {
+      await sleep(700);
+      wifiNets = [];
+      r = await cmd("#wifi scanresult", true);
+      if (!r.includes("running")) break;
+    }
+    $("scanInfo").textContent = `${wifiNets.length} networks`;
+    $("wifiScan").innerHTML = wifiNets.map((n, i) => `<div class="net click" data-i="${i}">${bars(n.rssi)}
+        <span class="name">${esc(n.ssid)}</span>${n.saved ? '<span class="muted">saved</span>' : ""}
+        <span class="muted">ch ${n.ch}</span><span title="${n.secured ? "secured" : "open"}" class="muted">${n.secured ? ICON.lock : ""}</span></div>`).join("")
+      || '<div class="net muted">no networks found</div>';
+  } finally { scanning = false; }
+}
+$("btnScan").onclick = scan;
+let joinNet = null;
+$("wifiScan").onclick = async e => {
+  const d = e.target.closest(".net.click"); if (!d) return;
+  joinNet = wifiNets[+d.dataset.i];
+  if (joinNet.saved) { await cmd("#wifi connect " + q(joinNet.ssid)); setTimeout(refreshWifi, 500); return; }
+  if (!joinNet.secured) { if (confirm(`Connect to open network "${joinNet.ssid}"?`)) join(joinNet.ssid, ""); return; }
+  $("joinSsid").textContent = joinNet.ssid; $("joinPass").value = ""; $("joinBox").hidden = false; $("joinPass").focus();
+};
+async function join(ssid, pass) {
+  const r = await cmd(`#wifi add ${q(ssid)} ${q(pass)}`);
+  if (r.startsWith("#err")) { toast(r); return; }
+  $("joinBox").hidden = true;
+  toast(`Saved "${ssid}", connecting… If you are connected via this WLAN, the page reconnects automatically.`);
+  setTimeout(refreshWifi, 1500); setTimeout(refreshWifi, 6000);
+}
+$("btnJoin").onclick = () => join(joinNet.ssid, $("joinPass").value);
+$("joinPass").onkeydown = e => { if (e.key === "Enter") $("btnJoin").click(); };
+$("joinShow").onchange = () => $("joinPass").type = $("joinShow").checked ? "text" : "password";
+$("btnJoinCancel").onclick = () => $("joinBox").hidden = true;
+$("btnHid").onclick = () => { if ($("hidSsid").value) join($("hidSsid").value, $("hidPass").value); };
+
+// ---------- pins ----------
+function onPins(p) {
+  const fill = (sel, list, cur) => {
+    $(sel).innerHTML = list.split(",").map(x => `<option${x === cur ? " selected" : ""}>${x}</option>`).join("");
+  };
+  fill("pinTx", p.tx_allowed || "", p.tx); fill("pinRx", p.rx_allowed || "", p.rx);
+  $("pinInfo").textContent = `current: CTX=GPIO ${p.tx}, CRX=GPIO ${p.rx}`;
+}
+$("btnPins").onclick = async () => {
+  const tx = $("pinTx").value, rx = $("pinRx").value;
+  if (tx === rx) { toast("CTX and CRX must be different pins"); return; }
+  if (!confirm(`Use CTX=GPIO ${tx}, CRX=GPIO ${rx}? Rewire the transceiver accordingly. The bus re-opens in LISTEN.`)) return;
+  const r = await cmd(`#pins ${tx} ${rx}`);
+  if (r.startsWith("#err")) toast(r);
+  cmd("#pins", true); cmd("#status", true);
+};
+$("btnFw").onclick = () => {
+  const file = $("fwFile").files[0];
+  if (!file) { toast("choose a firmware .bin first"); return; }
+  if (!confirm(`Flash ${file.name} (${(file.size / 1024).toFixed(0)} KB)? The bus switches to LISTEN, then the device reboots.`)) return;
+  const fd = new FormData(); fd.append("firmware", file, file.name);
+  const x = new XMLHttpRequest();
+  $("fwProg").hidden = false; $("fwInfo").textContent = "uploading...";
+  x.upload.onprogress = e => { if (e.lengthComputable) $("fwProg").value = 100 * e.loaded / e.total; };
+  x.onload = () => {
+    const ok = x.status === 200;
+    $("fwInfo").textContent = ok ? "done, device reboots - the page reloads when it is back..." : "failed: " + x.responseText;
+    $("fwInfo").className = ok ? "okc" : "err";
+    if (ok) reloadOnReconnect = true;   // connect() reloads the page as soon as the new firmware answers
+  };
+  x.onerror = () => { $("fwInfo").textContent = "upload error"; $("fwInfo").className = "err"; };
+  x.open("POST", "/update"); x.send(fd);
+};
+$("btnCmd").onclick = runConsole;
+$("cmd").onkeydown = e => {
+  const ta = $("cmd");
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runConsole(); return; }
+  // history only while the input is a single line, so multi-line editing keeps working
+  if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !ta.value.includes("\n") && cmdHistory.length) {
+    e.preventDefault();
+    histPos = Math.max(0, Math.min(cmdHistory.length, histPos + (e.key === "ArrowUp" ? -1 : 1)));
+    ta.value = cmdHistory[histPos] || "";
+    ta.rows = Math.min(8, ta.value.split("\n").length);
+  }
+};
+$("cmd").oninput = () => { $("cmd").rows = Math.min(8, Math.max(1, $("cmd").value.split("\n").length)); };
+// Splits console input into commands: ";" and new lines separate, except inside "quotes" or as "\;".
+function splitCommands(text) {
+  const out = []; let cur = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "\\" && text[i + 1] === ";") { cur += ";"; i++; continue; }
+    if (c === "\\" && quoted && i + 1 < text.length) { cur += c + text[++i]; continue; }   // keep \" \\ for the firmware
+    if (c === '"') quoted = !quoted;
+    if (!quoted && (c === ";" || c === "\n" || c === "\r")) { if (cur.trim()) out.push(cur.trim()); cur = ""; continue; }
+    cur += c;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+const cmdHistory = []; let histPos = 0, consoleBusy = false;
+async function runConsole() {
+  const text = $("cmd").value; if (!text.trim() || consoleBusy) return;
+  if (cmdHistory[cmdHistory.length - 1] !== text) cmdHistory.push(text);
+  histPos = cmdHistory.length;
+  $("cmd").value = ""; $("cmd").rows = 1;
+  const list = splitCommands(text);
+  consoleBusy = true;
+  try {
+    for (let i = 0; i < list.length; i++) {
+      let c = list[i];
+      if (/^[0-9A-Fa-f]{1,8}#/.test(c)) c = "#send " + c;   // candump-style frame
+      const r = await cmd(c);
+      if (r.startsWith("#err") && i < list.length - 1) {
+        log(`stopped after error, ${list.length - 1 - i} command(s) not run`, "err");
+        break;
+      }
+    }
+  } finally { consoleBusy = false; }
+}
+
+// ---------- ui helpers ----------
+let curTab = "live";
+$("tabs").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  curTab = b.dataset.t;
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("cur", x === b));
+  document.querySelectorAll("section").forEach(s => s.classList.toggle("cur", s.id === "t-" + curTab));
+  liveDirty = true;
+  if (curTab === "sys") { cmd("#stats", true); cmd("#pins", true); refreshWifi(); }
+  if (curTab === "rules") cmd("#rule list", true);
+};
+$("btnPause").onclick = () => { paused = !paused; $("btnPause").textContent = paused ? "Resume" : "Pause"; liveDirty = true; };
+$("btnClear").onclick = () => { live.length = 0; liveDirty = true; };
+$("btnIdsReset").onclick = () => ids.clear();
+["filter", "changes", "unkOnly"].forEach(i => $(i).addEventListener("input", () => liveDirty = true));
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])); }
+function log(text, cls = "") {
+  const c = $("console"), d = document.createElement("div");
+  d.textContent = `${new Date().toISOString().slice(11, 19)}Z  ${text}`; if (cls) d.className = cls;
+  c.appendChild(d); while (c.childNodes.length > 400) c.removeChild(c.firstChild);
+  c.scrollTop = c.scrollHeight;
+}
+function toast(text) {
+  const d = document.createElement("div"); d.textContent = text; $("toast").appendChild(d);
+  setTimeout(() => d.remove(), 6000);
+}
+// open the stored recordings first, so a running one can continue; connect in any case
+recInit().catch(e => { REC.db = null; toast("browser storage unavailable: " + e); }).finally(connect);
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+pyserial>=3.5
+python-can>=4.3       # optional: decode of .asc/.blf/... logs
+rich>=13              # optional: colored output
+prompt_toolkit>=3     # optional: input line that is not overwritten by the live view

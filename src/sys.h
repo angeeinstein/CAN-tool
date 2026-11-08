@@ -56,6 +56,12 @@ uint32_t heap_largest();    // largest block that can be allocated
 void sys_request_reboot(uint32_t delay_ms);
 bool sys_reboot_due();      // main task: true when it is time to restart
 
+// ---- credentials -------------------------------------------------------------------------
+// true while the built-in defaults (or the placeholders of secrets.example.h) are in use -> warned at
+// boot and shown in #status, because the web UI can switch to ACTIVE, send frames and flash firmware
+bool sys_web_login_is_default();
+bool sys_ap_password_is_default();
+
 // ---- OTA rollback ------------------------------------------------------------------------
 // A firmware installed by OTA starts "pending verify": if the device resets before it is confirmed, the
 // bootloader goes back to the previous firmware. The main task confirms it after APP_VALID_AFTER_S;

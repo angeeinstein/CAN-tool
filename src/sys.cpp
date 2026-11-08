@@ -1,5 +1,7 @@
 #include "sys.h"
 
+#include "config.h"
+
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <stdlib.h>
@@ -141,4 +143,14 @@ bool sys_app_pending_verify() {
 
 bool sys_app_confirm() {
     return sys_app_pending_verify() && esp_ota_mark_app_valid_cancel_rollback() == ESP_OK;
+}
+
+// ---- credentials --------------------------------------------------------------------------
+
+bool sys_web_login_is_default() {
+    return strcmp(WEB_PASSWORD, "franke") == 0 || strcmp(WEB_PASSWORD, "change-me") == 0 || strlen(WEB_PASSWORD) < 8;
+}
+
+bool sys_ap_password_is_default() {
+    return strcmp(AP_PASSWORD, "franke-can") == 0 || strcmp(AP_PASSWORD, "change-me-please") == 0;
 }

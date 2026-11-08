@@ -61,6 +61,10 @@ One job at a time (FIFO queue); jobs survive client disconnects. `stop_job` = Ct
   (`can_…​.log`). **If you change the CLI, the output format of the log path line, or the log location
   (`Messungen/`), update `can_lab.py` too.**
 - Endpoint `GET/POST /<secret>/announce?ip=<ip>&fw=<ver>` lets the ESP32 report its IP after a Wi-Fi
-  connect (DHCP, mDNS is blocked on the university network). Not yet called by the firmware.
+  connect (DHCP, mDNS is blocked on the university network). Not yet called by the firmware. Decided to leave it out while the DHCP addresses are stable (if the ESP32's IP
+  changes, read it via its own AP at 192.168.4.1 and set it on the Pi). If it is needed later: HTTPS through
+  the tunnel; the URL (contains the secret) stored in NVS via `#announce "<url>"` and never logged; one request
+  right after each Wi-Fi connect, then free the TLS memory (an ESP32 without PSRAM has ~85 KB heap; a TLS
+  handshake needs ~40 KB, see the enterprise notes in the main README).
 - `lab/scripts/` holds the proven test scripts (reply_detect, error_state, bus_check, …); the working
   copies on the Pi live in `~/can-lab-data/scripts/` and may diverge.

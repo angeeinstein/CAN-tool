@@ -115,6 +115,8 @@ if [[ -f "$OLD/can_lab.py" && "$OLD" != "$LAB" && ! -f "$CANLAB_HOME/config.json
 fi
 # seed scripts from the repo (never overwrites scripts that already exist on the Pi)
 for f in "$LAB"/scripts/*.py; do [[ -e "$CANLAB_HOME/scripts/$(basename "$f")" ]] || cp "$f" "$CANLAB_HOME/scripts/"; done
+# scripts must stay writable for put_script (copies from read-only sources lost the write bit)
+chmod -R u+rwX "$CANLAB_HOME/scripts" "$CANLAB_HOME/data" 2>/dev/null || true
 
 # ------------------------------------------------------------------ venv + packages
 VENV="$CANLAB_HOME/.venv"

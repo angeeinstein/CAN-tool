@@ -102,7 +102,7 @@ an unused 128 KB data partition, and a 64 KB `coredump` partition where ESP-IDF 
 
 **CAN pins** are configurable in `System → CAN transceiver pins` (or `#pins 13 27`). The dropdowns only offer pins that are safe for this chip. The setting is saved in flash and applied immediately (the bus re-opens in LISTEN). Rewire before you apply.
 
-**Web interface:** http://franke-can.local (or the IP from `#wifi`), login `WEB_USER` / `WEB_PASSWORD` (default `admin` / `franke`, **change them in secrets.h**). Tabs:
+**Web interface:** http://franke-can.local (or the IP from `#wifi`), login `WEB_USER` / `WEB_PASSWORD` (default `admin` / `franke`, **change them in secrets.h**; while the defaults or the placeholders of `secrets.example.h` are in use, the firmware warns at boot and `#status` shows `web_auth=default` / `ap_auth=default`). Tabs:
 - **Live**: frames with decoding, unknown frames highlighted, ID filter (`481,4C6`, `!181`), "changes only", pause
 - **IDs**: per-ID table with count, interval avg/min/max, last data
 - **Control & Send**: LISTEN/ACTIVE/CLOSED (ACTIVE asks for confirmation), echo, send frames, repeat sending, history

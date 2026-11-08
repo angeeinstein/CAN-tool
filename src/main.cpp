@@ -114,6 +114,11 @@ extern "C" void app_main() {
     host_notify("#boot franke-can fw=%s board=%s idf=%s mode=%s bitrate=%lu (type #help)", FW_VERSION,
                 CONFIG_IDF_TARGET, esp_get_idf_version(), can_mode_name(can_mode()), (unsigned long)can_bitrate());
     health_boot_report();
+    if (sys_web_login_is_default())
+        host_notify("#warn web login is the default or too short (WEB_USER/WEB_PASSWORD) - set your own "
+                    "(min. 8 characters) in include/secrets.h");
+    if (sys_ap_password_is_default())
+        host_notify("#warn access point password is the default (AP_PASSWORD) - set your own in include/secrets.h");
     if (sys_app_pending_verify())
         host_notify("#info new firmware: it is confirmed after %d s without a crash, otherwise the previous "
                     "one is restored", APP_VALID_AFTER_S);

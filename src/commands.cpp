@@ -133,13 +133,15 @@ void print_status() {
     net_status(net, sizeof(net));
     const char* fmt = host_format() == OutFormat::Text ? "text" : "slcan";
     host_reply("#status mode=%s stop_latch=%d stops=%lu watchdog=%lu bitrate=%lu format=%s slcan_ts=%s "
-               "echo=%s rules=%d enabled=%d limit=%u/s busoff=%s uptime_us=%llu clock=%s board=%s fw=%s %s",
+               "echo=%s rules=%d enabled=%d limit=%u/s busoff=%s uptime_us=%llu clock=%s board=%s fw=%s "
+               "web_auth=%s ap_auth=%s %s",
                can_mode_name(can_mode()), can_stop_latched() ? 1 : 0, (unsigned long)can_stop_count(),
                (unsigned long)can_watchdog_secs(),
                (unsigned long)can_bitrate(), fmt, host_slcan_timestamps() ? "on" : "off",
                host_echo() ? "on" : "off", rules_count(), rules_enabled_count(), can_rate_limit(),
                can_bus_off() ? "yes" : "no", (unsigned long long)esp_timer_get_time(), clock_source_name(),
-               CONFIG_IDF_TARGET, FW_VERSION, net);
+               CONFIG_IDF_TARGET, FW_VERSION, sys_web_login_is_default() ? "default" : "custom",
+               sys_ap_password_is_default() ? "default" : "custom", net);
     host_reply("#ok status");
 }
 

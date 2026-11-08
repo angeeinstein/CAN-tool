@@ -373,8 +373,12 @@ def put_script(name: str, content: str) -> str:
         raise ValueError("invalid script name (letters, digits, _ and -, ending in .py)")
     compile(content, name, "exec")   # syntax check
     p = SCRIPTS / name
+    bak = SCRIPTS / (name + ".bak")
+    for f in (p, bak):   # files copied from read-only sources may lack the write bit
+        if f.exists() and not os.access(f, os.W_OK):
+            os.chmod(f, 0o644)
     if p.exists():
-        (SCRIPTS / (name + ".bak")).write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+        bak.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
     p.write_text(content, encoding="utf-8")
     return f"saved {name} ({len(content)} bytes)"
 

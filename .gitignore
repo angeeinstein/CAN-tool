@@ -11,3 +11,9 @@ __pycache__/
 host/Messungen/
 Messungen/
 host/scripts/state/
+# ESP-IDF build: downloaded registry components and the generated full configs (sdkconfig.defaults* is the source)
+managed_components/
+sdkconfig.esp32dev
+sdkconfig.esp32-s3-devkitc-1
+sdkconfig.esp32-c3-devkitm-1
+sdkconfig.old

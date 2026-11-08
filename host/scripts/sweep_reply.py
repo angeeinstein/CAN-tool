@@ -130,7 +130,8 @@ checker = PollIntervalChecker(
 tested = 0
 
 try:
-    for idx in range(first, total):
+    idx = first
+    while idx < total:
         if tested >= limit:
             log(f"limit of {limit} candidates reached")
             break
@@ -140,9 +141,22 @@ try:
         mark(f"SWEEP {idx + 1}/{total} {cand}")
         status(f"candidate {idx + 1}/{total}: {cand}")
 
-        triggers, hit = 0, None
+        triggers, hit, inconclusive = 0, None, False
+        down0 = dev.downtime()
         while triggers < PER_CANDIDATE and not hit:
             f = next_frame(timeout=1.0)
+            if dev.downtime() > down0 + 0.001:
+                # a connection loss happened during this candidate. Do NOT judge the poll interval here:
+                # next_frame() may return None (or a replayed frame) before the replay has caught up, and
+                # the last real poll is from before the gap. Feed any replayed frame to keep the poll
+                # timer in sync, but skip overdue() this round.
+                down0 = dev.downtime()
+                if gap():                       # frames lost beyond the replay buffer: cannot judge
+                    checker.reset()             # the poll-timer reference is gone
+                    inconclusive = True
+                if f is not None:
+                    checker.feed(f.can_id, f.data, f.dev_us)
+                continue
             if f is None:   # quiet bus: only check whether the poll is overdue
                 hit = checker.overdue(now_us() or 0)
                 continue
@@ -157,10 +171,23 @@ try:
             elif not is_known(f):
                 hit = f"unknown frame {f.id_str}#{f.data_str} ({f.meaning or 'unknown'})"
 
+        # an inconclusive candidate (connection lost mid-test) is retried once before moving on
+        if inconclusive and not hit and state.get("retry_index") != idx:
+            log(f"candidate {idx + 1}/{total} inconclusive (connection lost) - retrying once")
+            csv("sweep", utc=utc_iso(dev.wall_of(now_us() or 0)), index=idx + 1, candidate=cand,
+                triggers_seen=triggers, hit=0, result="inconclusive-retry", reason="connection lost")
+            state["retry_index"] = idx
+            drain()
+            checker.reset()
+            continue
+
+        result_kind = "hit" if hit else ("inconclusive" if inconclusive else "ok")
         csv("sweep", utc=utc_iso(dev.wall_of(now_us() or 0)), index=idx + 1, candidate=cand,
-            triggers_seen=triggers, hit=1 if hit else 0, reason=hit or "")
+            triggers_seen=triggers, hit=1 if hit else 0, result=result_kind,
+            reason=hit or ("connection lost - frames missing" if inconclusive else ""))
         state["next_index"] = idx + 1
         state["last_candidate"] = cand
+        state["retry_index"] = None
         tested += 1
 
         if hit:
@@ -174,6 +201,7 @@ try:
                     break
                 drain()
                 checker.reset()   # the interval across the pause is not meaningful
+        idx += 1
     else:
         log("sweep complete")
         mark("SWEEP COMPLETE")

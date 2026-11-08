@@ -1,7 +1,6 @@
 // Hardware pins, defaults and limits. Every value can be overridden with -D in platformio.ini.
 #pragma once
 
-#include <Arduino.h>   // pins_arduino.h: RGB_BUILTIN, HIGH
 #include <sdkconfig.h>
 
 // ---- CAN transceiver (SN65HVD230) --------------------------------------
@@ -28,17 +27,24 @@
 #endif
 
 // ---- Status LED ----------------------------------------------------------
-// ESP32 DevKit: blue LED on GPIO2. S3/C3 DevKits: on-board RGB LED (driven via RGB_BUILTIN).
-// Set STATUS_LED_PIN to -1 to disable.
+// ESP32 DevKit: blue LED on GPIO2 (plain GPIO). S3/C3 DevKits: on-board addressable RGB LED (WS2812),
+// S3-DevKitC-1 v1.0 on GPIO48 (v1.1: GPIO38), C3-DevKitM-1 on GPIO8. Set STATUS_LED_PIN to -1 to disable.
 #ifndef STATUS_LED_PIN
-#if defined(RGB_BUILTIN)
-#define STATUS_LED_PIN RGB_BUILTIN
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#define STATUS_LED_PIN 48
+#define STATUS_LED_RGB 1
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+#define STATUS_LED_PIN 8
+#define STATUS_LED_RGB 1
 #else
 #define STATUS_LED_PIN 2
 #endif
 #endif
-#ifndef STATUS_LED_ON
-#define STATUS_LED_ON HIGH
+#ifndef STATUS_LED_RGB
+#define STATUS_LED_RGB 0          // 1 = addressable RGB LED, 0 = plain GPIO LED
+#endif
+#ifndef STATUS_LED_ON_LEVEL
+#define STATUS_LED_ON_LEVEL 1     // plain GPIO LED: level for "on"
 #endif
 
 // ---- Emergency-stop button (BOOT button, active low) --------------------
@@ -51,8 +57,9 @@
 #endif
 
 // ---- Host link -------------------------------------------------------------
+// Classic ESP32: UART0 through the USB bridge. S3/C3: the chip's USB-Serial/JTAG port (no baud rate).
 #ifndef HOST_SERIAL_BAUD
-#define HOST_SERIAL_BAUD 921600   // ignored for native USB (S3/C3)
+#define HOST_SERIAL_BAUD 921600
 #endif
 
 // ---- Queues / limits -------------------------------------------------------
@@ -68,8 +75,11 @@
 #ifndef HOST_MSG_QUEUE_LEN
 #define HOST_MSG_QUEUE_LEN 24     // asynchronous "#..." notifications
 #endif
+#ifndef CMD_QUEUE_LEN
+#define CMD_QUEUE_LEN 12          // command lines from USB/TCP/web waiting for the main task
+#endif
 #ifndef REPLAY_FRAMES
-#define REPLAY_FRAMES 1024        // RAM ring of recent frames for clients that reconnect (32 B each)
+#define REPLAY_FRAMES 512         // RAM ring of recent frames for clients that reconnect (32 B each)
 #endif
 #ifndef REPLAY_MSGS
 #define REPLAY_MSGS 32            // recent notifications (markers, #stop ...), ~208 B each
@@ -80,19 +90,37 @@
 #ifndef RULE_PENDING_MAX
 #define RULE_PENDING_MAX 48       // scheduled (delayed) rule actions
 #endif
+#ifndef CAN_ACTIVE_WATCHDOG_S
+// If the TCP/web client that enabled ACTIVE disconnects and does not come back within this many
+// seconds, the firmware reverts to LISTEN and disables all rules (not latched). 0 = off.
+// Runtime override: "#watchdog <secs>". USB (SINK_SERIAL) is never watched.
+#define CAN_ACTIVE_WATCHDOG_S 30
+#endif
 
 // ---- WLAN, TCP, web interface, OTA ---------------------------------------------
-#ifndef ENABLE_WIFI
-#define ENABLE_WIFI 1
-#endif
 #ifndef TCP_PORT
 #define TCP_PORT 3333
 #endif
 #ifndef MDNS_HOSTNAME
 #define MDNS_HOSTNAME "franke-can"
 #endif
+#ifndef WEB_MAX_CLIENTS
+#define WEB_MAX_CLIENTS 4                 // authenticated browsers at the same time
+#endif
 #ifndef WEB_WS_FLUSH_MS
-#define WEB_WS_FLUSH_MS 50                // live frame batches to the browser
+#define WEB_WS_FLUSH_MS 100               // live frame batches to the browsers (10/s)
+#endif
+#ifndef WEB_SEND_TIMEOUT_S
+// A browser that does not take a batch within this time is disconnected (it reconnects and fetches the
+// missed frames with #replay). Memory use is fixed: nothing is queued per browser.
+#define WEB_SEND_TIMEOUT_S 3
+#endif
+#ifndef HEALTH_BUSY_FPS
+#define HEALTH_BUSY_FPS 100               // automatic "#health" every 5 s while rx is above this rate
+#endif
+#ifndef APP_VALID_AFTER_S
+// A new firmware is confirmed (no rollback any more) after running this long without a crash.
+#define APP_VALID_AFTER_S 30
 #endif
 
 // Credentials: include/secrets.h (optional, not in git). Defaults below are used without it.
@@ -104,6 +132,9 @@
 #endif
 #ifndef WIFI_PASSWORD
 #define WIFI_PASSWORD ""
+#endif
+#ifndef WIFI_USERNAME
+#define WIFI_USERNAME ""                  // set = WPA2-Enterprise (PEAP/TTLS, e.g. eduroam) with this login
 #endif
 #ifndef AP_SSID
 #define AP_SSID "franke-can"
@@ -118,4 +149,4 @@
 #define WEB_PASSWORD "franke"             // protects web UI, WebSocket and OTA upload
 #endif
 
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "2.0.0"

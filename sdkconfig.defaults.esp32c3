@@ -1,0 +1,3 @@
+# ESP32-C3 (160 MHz max). The host link is the USB-Serial/JTAG port: no second console on it
+# (boot/panic messages would end up in the SLCAN stream).
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

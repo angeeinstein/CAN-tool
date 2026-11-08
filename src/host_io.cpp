@@ -1,11 +1,20 @@
 #include "host_io.h"
 
-#include <esp_timer.h>
+#include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 #include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "config.h"
+#include "host_serial.h"
 #include "net.h"
 #include "slcan_codec.h"
+#include "sys.h"
 #include "web.h"
 
 namespace {
@@ -31,9 +40,10 @@ SemaphoreHandle_t g_out_mtx = nullptr;
 volatile OutFormat g_format = OutFormat::Slcan;
 volatile bool g_slcan_ts = false;
 volatile bool g_echo = false;
-volatile uint32_t g_frames_dropped = 0;
-volatile uint32_t g_msgs_dropped = 0;
+std::atomic<uint32_t> g_frames_dropped{0};
+std::atomic<uint32_t> g_msgs_dropped{0};
 uint8_t g_reply_sinks = SINK_SERIAL;
+uint32_t g_reply_client = 0;   // browser of the command being executed
 
 // ---- replay buffer: recent frames + notifications in RAM, so a client can fetch what it missed ----
 struct ReplayFrame {          // 32 bytes
@@ -48,14 +58,14 @@ struct ReplayMsg {
     uint64_t ts_us;
     char text[MSG_LEN];
 };
-ReplayFrame* g_rf = nullptr;  // ring of REPLAY_FRAMES
+ReplayFrame* g_rf = nullptr;  // ring of REPLAY_FRAMES (nullptr while released, see host_replay_release)
+uint64_t g_rf_lost_until = 0; // frames before this time are gone (ring was released) -> reported as gap
 ReplayMsg* g_rm = nullptr;    // ring of REPLAY_MSGS
 uint32_t g_rf_head = 0, g_rf_count = 0;   // head = next write index
 uint32_t g_rm_head = 0, g_rm_count = 0;
 portMUX_TYPE g_replay_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void replay_push_frame(const CanFrame& f, uint64_t ts, bool tx, const char* reason) {
-    if (!g_rf) return;
     ReplayFrame r;
     r.ts_us = ts;
     r.id = f.id;
@@ -64,9 +74,11 @@ void replay_push_frame(const CanFrame& f, uint64_t ts, bool tx, const char* reas
     memcpy(r.data, f.data, 8);
     snprintf(r.reason, sizeof(r.reason), "%s", reason ? reason : "");
     portENTER_CRITICAL(&g_replay_mux);
-    g_rf[g_rf_head] = r;
-    g_rf_head = (g_rf_head + 1) % REPLAY_FRAMES;
-    if (g_rf_count < REPLAY_FRAMES) g_rf_count++;
+    if (g_rf) {   // checked under the lock: the ring may be released by another task
+        g_rf[g_rf_head] = r;
+        g_rf_head = (g_rf_head + 1) % REPLAY_FRAMES;
+        if (g_rf_count < REPLAY_FRAMES) g_rf_count++;
+    }
     portEXIT_CRITICAL(&g_replay_mux);
 }
 
@@ -83,15 +95,28 @@ void replay_push_msg(const char* text, uint64_t ts) {
 }
 
 // Writes to the selected links. Caller must hold g_out_mtx.
-// reply = command reply: for the web it goes only to the browser that sent the command.
+// reply = command reply: may wait for the link instead of dropping, and for the web it goes only to
+// the browser that sent the command.
 void write_sinks(uint8_t sinks, const char* buf, size_t len, bool reply = false) {
     if (len == 0) return;
-    if (sinks & SINK_SERIAL) Serial.write(reinterpret_cast<const uint8_t*>(buf), len);
-    if (sinks & SINK_TCP) net_write(buf, len);
+    if (sinks & SINK_SERIAL) host_serial_write(buf, len);
+    if (sinks & SINK_TCP) net_tcp_write(buf, len, reply);
     if (sinks & SINK_WEB) {
-        if (reply) web_reply(buf, len);
+        if (reply) web_reply(g_reply_client, buf, len);
         else web_write(buf, len);
     }
+}
+
+// Command reply to the requesting link. A browser reply goes through the web module's own per-browser
+// buffer and may wait for that browser - without holding g_out_mtx, so USB/TCP output keeps running.
+void write_reply(const char* buf, size_t len) {
+    if (g_reply_sinks == SINK_WEB) {
+        web_reply(g_reply_client, buf, len);
+        return;
+    }
+    xSemaphoreTake(g_out_mtx, portMAX_DELAY);
+    write_sinks(g_reply_sinks, buf, len, true);
+    xSemaphoreGive(g_out_mtx);
 }
 
 // "#rx/#tx ..." text line incl. terminator
@@ -173,11 +198,42 @@ void host_init() {
     g_out_mtx = xSemaphoreCreateMutex();
     g_rf = static_cast<ReplayFrame*>(calloc(REPLAY_FRAMES, sizeof(ReplayFrame)));
     g_rm = static_cast<ReplayMsg*>(calloc(REPLAY_MSGS, sizeof(ReplayMsg)));
-    xTaskCreatePinnedToCore(output_task, "host_out", 6144, nullptr, 3, nullptr,
+    // above the web server (5) and the web sender (4): frames must keep flowing to USB/TCP
+    xTaskCreatePinnedToCore(output_task, "host_out", 4096, nullptr, 6, nullptr,
                             portNUM_PROCESSORS > 1 ? 0 : tskNO_AFFINITY);
 }
 
-void host_set_reply_sink(uint8_t sinks) { g_reply_sinks = sinks; }
+void host_replay_release() {
+    portENTER_CRITICAL(&g_replay_mux);
+    ReplayFrame* p = g_rf;
+    g_rf = nullptr;
+    g_rf_count = g_rf_head = 0;
+    portEXIT_CRITICAL(&g_replay_mux);
+    if (p) {
+        free(p);
+        host_notify("#info replay buffer released for the WLAN login (%u KB); frames until it is back cannot be "
+                    "replayed", static_cast<unsigned>(REPLAY_FRAMES * sizeof(ReplayFrame) / 1024));
+    }
+}
+
+bool host_replay_restore() {
+    if (g_rf) return true;
+    ReplayFrame* p = static_cast<ReplayFrame*>(calloc(REPLAY_FRAMES, sizeof(ReplayFrame)));
+    if (!p) return false;   // heap still short: the caller tries again later
+    portENTER_CRITICAL(&g_replay_mux);
+    g_rf_count = g_rf_head = 0;
+    g_rf_lost_until = now_us();
+    g_rf = p;
+    portEXIT_CRITICAL(&g_replay_mux);
+    return true;
+}
+
+void host_set_reply_target(uint8_t sink, uint32_t web_client) {
+    g_reply_sinks = sink;
+    g_reply_client = web_client;
+}
+uint8_t host_reply_sink() { return g_reply_sinks; }
+uint32_t host_reply_client() { return g_reply_client; }
 
 void host_emit_rx(const CanFrame& f, uint64_t ts_us) {
     FrameEvent e;
@@ -205,18 +261,18 @@ void host_notify(const char* fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(m.text, sizeof(m.text), fmt, ap);
     va_end(ap);
-    replay_push_msg(m.text, static_cast<uint64_t>(esp_timer_get_time()));
+    replay_push_msg(m.text, now_us());
     if (!g_msg_q || xQueueSend(g_msg_q, &m, 0) != pdTRUE) g_msgs_dropped++;
 }
 
 void host_replay(uint64_t since_us) {
-    // Everything after since_us, merged by time, sent in ~2 KB chunks (WebSocket queue friendly):
+    // Everything after since_us, merged by time, sent in ~2 KB chunks:
     //   #replay begin since=<us> now=<us>
     //   #replay gap <from_us> <to_us>        (only if the buffer does not reach back far enough)
     //   #prx/#ptx <us> <id> <dlc> <data> [reason]   (same as #rx/#tx)
     //   #pmsg <us> <original notification line>
     //   #ok replay frames=<n> msgs=<m>
-    const uint64_t now = static_cast<uint64_t>(esp_timer_get_time());
+    const uint64_t now = now_us();
     char chunk[2200];
     size_t used = 0;
     auto flush = [&]() {
@@ -239,12 +295,16 @@ void host_replay(uint64_t since_us) {
 
     // oldest buffered frame -> gap detection (only when the ring has wrapped)
     portENTER_CRITICAL(&g_replay_mux);
-    const uint32_t f_count = g_rf_count, f_head = g_rf_head, m_count = g_rm_count, m_head = g_rm_head;
+    const uint32_t f_count = g_rf ? g_rf_count : 0, f_head = g_rf_head, m_count = g_rm_count, m_head = g_rm_head;
     const uint64_t oldest = f_count ? g_rf[(f_head + REPLAY_FRAMES - f_count) % REPLAY_FRAMES].ts_us : now;
+    const uint64_t lost_until = g_rf ? g_rf_lost_until : now;   // released right now: nothing is buffered
     portEXIT_CRITICAL(&g_replay_mux);
-    if (f_count == REPLAY_FRAMES && oldest > since_us) {
+    uint64_t gap_to = 0;
+    if (f_count == REPLAY_FRAMES && oldest > since_us) gap_to = oldest;   // ring wrapped
+    if (lost_until > since_us && lost_until > gap_to) gap_to = lost_until;  // ring was released meanwhile
+    if (gap_to) {
         n = snprintf(line, sizeof(line), "#replay gap %llu %llu", (unsigned long long)since_us,
-                     (unsigned long long)oldest);
+                     (unsigned long long)gap_to);
         add(line, n);
     }
 
@@ -260,9 +320,14 @@ void host_replay(uint64_t since_us) {
     for (;;) {
         while (!have_f && fi < f_count) {
             portENTER_CRITICAL(&g_replay_mux);
-            rf = g_rf[(f_start + fi) % REPLAY_FRAMES];
+            const bool there = g_rf != nullptr;
+            if (there) rf = g_rf[(f_start + fi) % REPLAY_FRAMES];
             portEXIT_CRITICAL(&g_replay_mux);
             fi++;
+            if (!there) {   // released during this replay
+                fi = f_count;
+                break;
+            }
             if (rf.ts_us > since_us && rf.ts_us <= now && rf.ts_us >= last_f) have_f = true;
         }
         while (!have_m && mi < m_count) {
@@ -308,16 +373,10 @@ void host_reply(const char* fmt, ...) {
     size_t len = static_cast<size_t>(n) < sizeof(buf) - 2 ? static_cast<size_t>(n) : sizeof(buf) - 3;
     buf[len++] = '\n';
     buf[len++] = '\r';
-    xSemaphoreTake(g_out_mtx, portMAX_DELAY);
-    write_sinks(g_reply_sinks, buf, len, true);
-    xSemaphoreGive(g_out_mtx);
+    write_reply(buf, len);
 }
 
-void host_reply_raw(const char* s) {
-    xSemaphoreTake(g_out_mtx, portMAX_DELAY);
-    write_sinks(g_reply_sinks, s, strlen(s), true);
-    xSemaphoreGive(g_out_mtx);
-}
+void host_reply_raw(const char* s) { write_reply(s, strlen(s)); }
 
 void host_set_format(OutFormat f) { g_format = f; }
 OutFormat host_format() { return g_format; }

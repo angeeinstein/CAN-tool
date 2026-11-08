@@ -5,7 +5,8 @@
 // Transmission is only possible in ACTIVE mode; this is checked on every single frame.
 #pragma once
 
-#include <Arduino.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "can_frame.h"
 
@@ -15,14 +16,14 @@ const char* can_mode_name(CanMode m);
 
 void can_init();  // installs the driver in LISTEN mode and starts the RX task
 
-// Synchronous reconfiguration (loop task only). Waits until the RX task has applied it.
+// Synchronous reconfiguration (main task only). Waits until the RX task has applied it.
 // Returns false on driver error (the bus is then CLOSED).
 bool can_set_mode(CanMode m);
 bool can_set_bitrate(uint32_t bps);  // keeps the current mode; false if unsupported
 bool can_bitrate_supported(uint32_t bps);
 
 // CTX/CRX pins. Only pins safe for this chip are accepted (see TX_PINS/RX_PINS in can_bus.cpp).
-// Saved in NVS and applied immediately (bus re-opens in LISTEN). Loop task only.
+// Saved in NVS and applied immediately (bus re-opens in LISTEN). Main task only.
 bool can_set_pins(int tx, int rx, char* err, size_t errcap);
 void can_get_pins(int& tx, int& rx);
 void can_pins_allowed(char* tx_out, size_t tx_cap, char* rx_out, size_t rx_cap);
@@ -45,6 +46,14 @@ void can_emergency_stop(const char* reason, bool latch = true);
 bool can_stop_latched();
 uint32_t can_stop_count();   // latched stops since the last #resume
 void can_resume();
+
+// ---- ACTIVE watchdog: revert to LISTEN if the client that enabled ACTIVE disappears ----
+void can_active_set_owner(uint8_t sink, uint32_t web_client);  // call on a successful switch to ACTIVE
+uint8_t can_active_owner();          // sink (SINK_*) that owns ACTIVE, 0 = none
+uint32_t can_active_owner_client();  // web client id, if the owner is SINK_WEB
+void can_watchdog_tick(bool owner_alive);   // call ~1/s from the main task; reverts after the timeout
+uint32_t can_watchdog_secs();        // 0 = off
+void can_set_watchdog(uint32_t secs);
 
 void can_set_rate_limit(uint16_t per_sec);
 uint16_t can_rate_limit();

@@ -6,6 +6,8 @@
 // Home WLAN (initial default; WLAN settings saved in the web UI take precedence)
 #define WIFI_SSID "your-ssid"
 #define WIFI_PASSWORD "your-password"
+// Enterprise network (WPA2-Enterprise, e.g. eduroam): also set the login name. Leave "" for a normal WLAN.
+// #define WIFI_USERNAME "user@university.example"
 
 // Fallback access point, opened when the WLAN is not reachable for 30 s
 #define AP_SSID "franke-can"

@@ -1,15 +1,13 @@
 #include "clock.h"
 
-#include <Arduino.h>
+#include <esp_sntp.h>
 #include <esp_timer.h>
+#include <stdlib.h>
 #include <sys/time.h>
+#include <time.h>
 
 #include "config.h"
 #include "host_io.h"
-
-#if ENABLE_WIFI
-#include <esp_sntp.h>
-#endif
 
 namespace {
 
@@ -22,7 +20,6 @@ uint64_t epoch_now_us() {
     return static_cast<uint64_t>(tv.tv_sec) * 1000000ULL + static_cast<uint64_t>(tv.tv_usec);
 }
 
-#if ENABLE_WIFI
 void on_ntp_sync(struct timeval*) {
     const bool first = g_src != ClockSource::Ntp;
     g_src = ClockSource::Ntp;
@@ -34,15 +31,19 @@ void on_ntp_sync(struct timeval*) {
                     tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
     }
 }
-#endif
 
 }  // namespace
 
 void clock_init() {
-#if ENABLE_WIFI
+    // UTC everywhere; the browser / PC shows local time
+    setenv("TZ", "UTC0", 1);
+    tzset();
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);   // re-sync every CONFIG_LWIP_SNTP_UPDATE_DELAY (1 h)
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setservername(1, "time.google.com");
+    esp_sntp_setservername(2, "time.cloudflare.com");
     sntp_set_time_sync_notification_cb(on_ntp_sync);
-    configTime(0, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");   // UTC; clients show local time
-#endif
+    esp_sntp_init();   // keeps trying until the WLAN has internet
 }
 
 ClockSource clock_source() { return g_src; }

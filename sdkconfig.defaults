@@ -1,0 +1,66 @@
+# ESP-IDF settings that differ from the ESP-IDF defaults (all boards). Target-specific additions are in
+# sdkconfig.defaults.<target>, which ESP-IDF applies automatically.
+# PlatformIO generates sdkconfig.<env> from these files on the first build. After changing an option in
+# menuconfig ("pio run -e esp32dev -t menuconfig"), copy it here so a fresh build gets the same config.
+#
+# Why they are set:
+#   FREERTOS_HZ=1000            1 ms ticks: rule replies are scheduled with ms delays
+#   COMPILER_OPTIMIZATION_PERF  -O2 (the default is -Og, a debug build)
+#   LOG/BOOTLOADER_LOG NONE     the console UART is the SLCAN host port - no log text may appear on it
+#   ESP_TASK_WDT_*              a task hanging 10 s restarts the device (it runs unattended in the machine)
+#   ESP_COREDUMP_*              crash report into the "coredump" partition, read and reported after the reboot
+#   BOOTLOADER_APP_ROLLBACK     a new firmware that crashes before it is marked valid is rolled back
+#   TWAI_ISR_IN_IRAM            CAN reception keeps working while the flash is written (OTA, NVS)
+#   TWAI_ERRATA_FIX_*           (defaults, listed for clarity) LISTEN mode must never put a dominant bit
+#                               on the bus, not even an error frame
+#   HTTPD_*                     WebSocket support; browsers send long headers (auth, cookies)
+#   LWIP_MAX_SOCKETS            web server (6 clients + 3 internal) + TCP server + mDNS
+#   ESP_MAIN_TASK_STACK_SIZE    the main task executes all commands (#replay, #status ...)
+#   ESP_WIFI_STATIC_RX_BUFFER   8 instead of 10 (1.6 KB each): heap for the enterprise login
+#   LOG_MAXIMUM_LEVEL_INFO      log texts up to INFO stay in the image but are OFF at runtime (default NONE);
+#                               "#log <tag> info" shows them on the console UART for debugging.
+#                               (To see why an enterprise login fails, also set ESP_WIFI_DEBUG_PRINT=y - it costs
+#                               9 KB RAM - and use "#log wpa info". Never "debug": that prints keys/passwords.)
+#   ESP_COREDUMP_LOGS=n         the core dump code prints with its own function past the runtime log level
+#   MBEDTLS_DYNAMIC_*           TLS buffers only while needed and only as large as needed: the enterprise
+#   ESP_WIFI_ENT_FREE_*         login (PEAP = TLS + a 5.5 KB certificate chain) otherwise runs out of heap
+#                               on an ESP32 without PSRAM ("SSL: Could not allocate memory for TLS data")
+
+# flash / partitions (4 MB boards, same layout as before)
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# bootloader / app
+CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_LOG_DEFAULT_LEVEL_NONE=y
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+
+# system
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_LOGS=n
+
+# CAN
+CONFIG_TWAI_ISR_IN_IRAM=y
+CONFIG_TWAI_ERRATA_FIX_LISTEN_ONLY_DOM=y
+
+# WLAN / network
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=y
+CONFIG_ESP_WIFI_ENT_FREE_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=y
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_LWIP_SNTP_MAX_SERVERS=3

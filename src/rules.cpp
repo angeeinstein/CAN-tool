@@ -1,7 +1,13 @@
 #include "rules.h"
 
-#include <Preferences.h>
+#include <atomic>
+#include <esp_rom_sys.h>
 #include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+#include <stdio.h>
+#include <string.h>
 
 #include <memory>
 #include <new>
@@ -10,6 +16,7 @@
 #include "config.h"
 #include "host_io.h"
 #include "rule_engine.h"
+#include "sys.h"
 
 namespace {
 
@@ -27,8 +34,8 @@ struct Pending {
 Pending g_pending[RULE_PENDING_MAX];
 portMUX_TYPE g_pend_mux = portMUX_INITIALIZER_UNLOCKED;
 uint32_t g_pend_seq = 0;
-volatile uint32_t g_pend_overflow = 0;
-volatile uint32_t g_rule_skipped = 0;
+std::atomic<uint32_t> g_pend_overflow{0};
+std::atomic<uint32_t> g_rule_skipped{0};
 TaskHandle_t g_sched_task = nullptr;
 
 constexpr uint32_t BUSY_WAIT_US = 1500;   // below this, wait actively for sub-ms precision
@@ -91,7 +98,7 @@ void sched_task(void*) {
             ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS((wait - 1000) / 1000));
             continue;
         }
-        if (wait > 0) delayMicroseconds(static_cast<uint32_t>(wait));
+        if (wait > 0) esp_rom_delay_us(static_cast<uint32_t>(wait));
 
         Pending p;
         bool have = false;
@@ -131,13 +138,15 @@ void cmd_save() {
     }
     xSemaphoreGive(g_rules_mtx);
 
-    Preferences prefs;
-    if (!prefs.begin(NVS_NS, false)) {
-        host_reply("#err rule save: NVS not available");
-        return;
+    bool ok;
+    {
+        Nvs prefs(NVS_NS, true);
+        if (!prefs.ok()) {
+            host_reply("#err rule save: NVS not available");
+            return;
+        }
+        ok = (len == 0) ? prefs.erase(NVS_KEY) : prefs.set_blob(NVS_KEY, blob, len);
     }
-    bool ok = (len == 0) ? (prefs.remove(NVS_KEY) || true) : (prefs.putBytes(NVS_KEY, blob, len) == len);
-    prefs.end();
     if (ok)
         host_reply("#ok rule save %d", n);
     else
@@ -151,19 +160,15 @@ void cmd_load() {
         return;
     }
     char* blob = buf.get();
-    Preferences prefs;
-    if (!prefs.begin(NVS_NS, true)) {
-        host_reply("#err rule load: nothing saved");
-        return;
+    size_t len;
+    {
+        Nvs prefs(NVS_NS, false);
+        len = prefs.blob_size(NVS_KEY);
+        if (len == 0 || len >= BLOB_SIZE || !prefs.get_blob(NVS_KEY, blob, len)) {
+            host_reply("#err rule load: nothing saved");
+            return;
+        }
     }
-    size_t len = prefs.getBytesLength(NVS_KEY);
-    if (len == 0 || len >= BLOB_SIZE) {
-        prefs.end();
-        host_reply("#err rule load: nothing saved");
-        return;
-    }
-    prefs.getBytes(NVS_KEY, blob, len);
-    prefs.end();
     blob[len] = '\0';
 
     RuleSet* tmp = new RuleSet();   // parse into a temporary set, then swap in

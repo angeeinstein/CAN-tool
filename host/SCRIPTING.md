@@ -94,8 +94,18 @@ Node n sends on 0x480+n and acknowledges on 0x400+n. Reply code = request code +
 Time base: every frame has `dev_us` = **device time in µs since ESP32 boot** (exact, from the CAN receive
 moment) and `wall` = UTC epoch seconds. Use `dev_us` for intervals. All waiting functions count only
 **connected time**: if Wi-Fi drops, the tool reconnects (every 2 s), fetches the missed frames from the
-device's replay buffer (last 1024 frames) and the waits continue, so a short dropout does not produce false
-timeouts or false "no reaction" results. Commands wait up to 120 s for the connection to come back.
+device's replay buffer (last 512 frames) and the waits continue, so a short dropout does not produce false
+timeouts or false "no reaction" results. Commands wait up to 120 s for the connection to come back and are
+retried once after a reconnect (except `#send` / `#resume`, which could act twice). `mark()` never ends the
+script if it fails - it only warns. If a dropout is longer than the device's replay buffer (a **DATA GAP**),
+the missed frames are gone: `gap()` returns True once, and interval/timing checks over that window are not
+trustworthy - treat the current step as *inconclusive* rather than a hit (see `sweep_reply.py`).
+
+**Firmware ACTIVE watchdog**: if the TCP/USB or web client that switched the bus to ACTIVE disconnects and
+does not come back within `#watchdog` seconds (default 30, `0` = off), the firmware itself reverts to LISTEN
+and disables all rules (not latched). So even if a script's PC crashes mid-test, the machine stops being
+driven. After a longer outage a reconnecting script may therefore find the device back in LISTEN - check
+`#status` (`mode=`, `watchdog=`) and re-arm before continuing.
 
 **Frame object** (`Frame`): `can_id`, `data` (tuple of ints), `dlc`, `ext`, `rtr`, `tx` (True = sent by us),
 `reason` (rule name / "manual" for own frames), `dev_us`, `wall`, `id_str` ("481"), `data_str` ("11 00 27"),
@@ -114,6 +124,7 @@ bytes as the pattern.
 | `collect(seconds, id=None, data=None)` | waits `seconds` of device time, returns all received frames in that window that match |
 | `next_frame(timeout=1.0)` | next received frame in arrival order (stream processing), or `None`. Call `drain()` first to skip old ones |
 | `drain()` | discard frames queued for `next_frame()` |
+| `gap()` | True once if an unrecoverable DATA GAP happened since the last call (frames lost beyond the replay buffer); use it to mark a step inconclusive after a long dropout |
 | `intervals(frames)` | list of intervals in ms between consecutive frames (by `dev_us`) |
 | `now_us()` | current device time (µs since boot), same base as `frame.dev_us` |
 | `sleep(s)` | sleep `s` seconds of connected time |
@@ -129,7 +140,11 @@ bytes as the pattern.
 | also available | `dev` (Device), `decode`, `Frame`, `make_pattern`, `matches(frame, id, pattern)`, `utc_iso(epoch)` |
 
 Useful raw commands for `cmd()`: `#status`, `#stats` (counters incl. lost frames, error counters,
-`heap_free`), `#time`, `#rule list`. Do not use `#reboot`, `#pins`, `#wifi`, `#bitrate`, `#limit`.
+`heap_free`), `#health` (heap, rx rate, drop counters, task stack headroom, reset reason), `#time`,
+`#rule list`. Do not use `#reboot`, `#pins`, `#wifi`, `#bitrate`, `#limit`, `#watchdog`, `#selftest`.
+
+The device sends `#warn dropped: …` if it has to drop frames/notifications under load, and `#health …`
+periodically while the bus is busy — both arrive as ordinary notifications (logged, not command replies).
 
 ## 6. Firmware rules (real-time replies)
 

@@ -940,8 +940,9 @@ class PersistentState(dict):
 class ScriptApi:
     """Functions available inside test scripts (injected as globals). See host/SCRIPTING.md."""
 
-    # commands that can safely be sent again after a dropout (state-setting, not "do something")
-    _IDEMPOTENT = ("#mode", "#rule", "#status", "#stats", "#time", "#pins", "#wifi", "#echo", "#format", "#limit")
+    # after a dropout every command is retried once, except these: a resend could act twice
+    # (#send puts a real frame on the bus; #resume must never come from a script)
+    _NO_RETRY = ("#send", "#resume")
 
     def __init__(self, dev: Device, rec: Recorder, verbose: bool, script: Path, args: dict):
         self.dev = dev
@@ -955,6 +956,7 @@ class ScriptApi:
         self._frames: "queue.Queue[Frame]" = queue.Queue()
         self._csv: dict[str, tuple[Path, list[str]]] = {}
         self._latched: Optional[str] = None
+        self._data_gap = False
         dev.on_frame(lambda f: None if f.tx else self._frames.put(f))
         dev.on_notify(self._on_notify)
         dev.abort_check = self._check_latch
@@ -963,6 +965,8 @@ class ScriptApi:
     def _on_notify(self, line: str) -> None:
         if line.startswith("#stop") and "LATCHED" in line:
             self._latched = line
+        if "DATA GAP" in line:
+            self._data_gap = True   # consumed by gap()
 
     def _check_latch(self) -> None:
         if self._latched:
@@ -986,7 +990,9 @@ class ScriptApi:
         try:
             lines = self.dev.command(text, timeout=5.0)
         except DeviceError as e:
-            if not text.startswith(self._IDEMPOTENT) or not self.dev.wait_ready():
+            # connection dropped during the command: wait for the reconnect (up to 120 s) and retry once.
+            # #send / #resume are never resent (a resend could act twice).
+            if text.startswith(self._NO_RETRY) or not self.dev.wait_ready():
                 raise
             self.rec.event(f"retry after dropout ({e})")
             lines = self.dev.command(text, timeout=5.0)
@@ -1065,9 +1071,20 @@ class ScriptApi:
                 return n
 
     def mark(self, note: str = "") -> None:
-        """Marker at this moment, written to the .markers.txt (same as the web UI button)."""
+        """Marker at this moment, written to the .markers.txt (same as the web UI button).
+        A lost marker is only a warning - it never ends the script (a STOP latch still does)."""
         at = self.dev.dev_now_us()
-        self.cmd(f"#mark {'@%d ' % at if at else ''}{note}".rstrip())
+        try:
+            self.cmd(f"#mark {'@%d ' % at if at else ''}{note}".rstrip())
+        except DeviceError as e:
+            self.log(f"marker not saved ({e})")
+
+    def gap(self) -> bool:
+        """True (once) if an unrecoverable DATA GAP happened since the last call - i.e. frames were
+        lost beyond the device's replay buffer, so the poll timing cannot be judged over that window."""
+        g = self._data_gap
+        self._data_gap = False
+        return g
 
     def sleep(self, s: float) -> None:
         """Sleeps s seconds of connected time (a dropout extends it)."""
@@ -1113,7 +1130,7 @@ class ScriptApi:
     def globals(self) -> dict:
         g = {name: getattr(self, name) for name in
              ("log", "status", "cmd", "mode", "rule", "send", "wait_for", "collect", "next_frame", "drain",
-              "sleep", "now", "now_us", "result", "ask", "intervals", "mark", "csv")}
+              "sleep", "now", "now_us", "result", "ask", "intervals", "mark", "csv", "gap")}
         g.update(dev=self.dev, decode=decode, Frame=Frame, args=self.args, state=self.state,
                  make_pattern=make_pattern, matches=matches, utc_iso=utc_iso)
         return g
@@ -1161,12 +1178,26 @@ def cmd_script(args) -> int:
         rc = 1
     finally:
         if not args.keep_active:
-            try:
-                # own cleanup: LISTEN + rules off, but without setting the STOP latch
-                dev.command("#stop nolatch", timeout=2.0)
-                rec.event("cleanup: #stop nolatch (LISTEN, rules disabled)")
-            except DeviceError:
-                pass
+            # own cleanup: LISTEN + rules off, but without setting the STOP latch. This MUST happen,
+            # or the device stays ACTIVE with the sweep rule running - so retry through a dropout for 60 s.
+            deadline = time.monotonic() + 60.0
+            done = False
+            while time.monotonic() < deadline:
+                if not dev.wait_ready(timeout=min(5.0, max(0.1, deadline - time.monotonic()))):
+                    continue
+                try:
+                    dev.command("#stop nolatch", timeout=3.0)
+                    rec.event("cleanup: #stop nolatch (LISTEN, rules disabled)")
+                    done = True
+                    break
+                except DeviceError as e:
+                    rec.event(f"cleanup retry ({e})")
+            if not done:
+                out("WARNING: could not send cleanup '#stop' within 60 s - the device may still be in "
+                    "ACTIVE with the sweep rule running. Open the web UI and press STOP, or power-cycle "
+                    "the ESP32. (The firmware watchdog also reverts to LISTEN ~30 s after this client "
+                    "disconnects.)", "bold red")
+                rec.event("cleanup FAILED after 60 s")
         ok = sum(1 for _, k, _ in api.results if k)
         out(f"results: {ok}/{len(api.results)} OK; {rec.count} frames in {rec.path}", "bold")
         for name, k, details in api.results:

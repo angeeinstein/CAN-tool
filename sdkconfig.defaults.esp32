@@ -1,0 +1,2 @@
+# classic ESP32: full CPU speed; the host link is UART0 (CP210x/CH340 bridge)
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y

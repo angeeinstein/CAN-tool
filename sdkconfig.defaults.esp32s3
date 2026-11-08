@@ -1,0 +1,4 @@
+# ESP32-S3: full CPU speed. The host link is the USB-Serial/JTAG port: no second console on it
+# (boot/panic messages would end up in the SLCAN stream).
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

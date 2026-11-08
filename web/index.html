@@ -216,6 +216,17 @@ tr.mark td{background:#2463d822 !important;color:var(--accent);font-weight:600}
   <div class="card"><h2>Status</h2><div class="kv" id="statusKv"></div></div>
   <div class="card"><h2>Statistics</h2><div class="kv" id="statsKv"></div>
     <div class="row" style="margin-top:8px"><button id="btnStatsReset">Reset statistics</button></div></div>
+  <div class="card"><h2>Diagnostics</h2>
+    <div class="kv" id="diagKv"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="btnHealth">Refresh health</button>
+      <label class="muted">Flood self-test:
+        <input id="floodFps" type="number" value="400" min="1" max="5000" style="width:5em"> frames/s for
+        <input id="floodSecs" type="number" value="60" min="1" max="1800" style="width:4em"> s</label>
+      <button id="btnFlood">Start</button><button id="btnFloodStop">Stop</button>
+    </div>
+    <p class="muted" style="margin:6px 0 0">Injects synthetic RX frames (id 7FF) into the output path only — nothing is put on the CAN bus.</p>
+  </div>
   <div class="card">
     <h2>CAN settings</h2>
     <div class="row">
@@ -236,14 +247,17 @@ tr.mark td{background:#2463d822 !important;color:var(--accent);font-weight:600}
     <div class="netlist" id="wifiScan"><div class="net muted">press Scan to search for networks</div></div>
     <div class="row" id="joinBox" hidden>
       <b id="joinSsid"></b>
-      <input id="joinPass" type="password" placeholder="password" size="22" autocomplete="off">
+      <input id="joinUser" name="eap-identity" placeholder="username (e.g. user@uni.example)" size="26" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" hidden>
+      <input id="joinPass" name="wlan-key" type="password" placeholder="password" size="22" autocomplete="new-password" data-lpignore="true">
       <label><input type="checkbox" id="joinShow"> show</label>
       <button class="primary" id="btnJoin">Connect</button><button id="btnJoinCancel">Cancel</button>
     </div>
     <details><summary class="muted">Hidden network</summary>
       <div class="row" style="margin-top:6px"><input id="hidSsid" placeholder="SSID" size="20">
-        <input id="hidPass" type="password" placeholder="password" size="20"><button id="btnHid">Save &amp; connect</button></div>
+        <input id="hidUser" name="eap-identity-hidden" placeholder="username (enterprise only)" size="22" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true">
+        <input id="hidPass" name="wlan-key-hidden" type="password" placeholder="password" size="20" autocomplete="new-password" data-lpignore="true"><button id="btnHid">Save &amp; connect</button></div>
     </details>
+    <div class="muted" style="margin-top:6px">Enterprise networks (eduroam, university WLAN) use a username and password (PEAP/TTLS). The server certificate is not checked, same as on many simple devices, so only enter credentials where that is acceptable. Credentials are stored unencrypted in the device's flash.</div>
     <div class="muted" style="margin-top:6px">The access point <code>franke-can</code> (http://192.168.4.1) is always on. It shares the radio with the WLAN connection, so it moves to the WLAN's channel, and it may stall for 1–2 s while the device scans.</div>
   </div>
   <div class="card">
@@ -380,13 +394,17 @@ function onLine(l) {
   if (l.startsWith("#stats ")) { onStats(kv(l)); return; }
   if (l.startsWith("#rule ")) { ruleRows.push(l); return; }
   if (l.startsWith("#wifistate ")) { onWifiState(l); return; }
-  if (l.startsWith("#wifisaved ")) { const m = l.match(/^#wifisaved (\d) (.*)$/); if (m) wifiSaved.push({cur: m[1] === "1", ssid: m[2]}); return; }
+  if (l.startsWith("#wifisaved ")) { const m = l.match(/^#wifisaved (\d) (psk|enterprise|rejected) (\S+) (.*)$/); if (m) wifiSaved.push({cur: m[1] === "1", ent: m[2] !== "psk", rejected: m[2] === "rejected", user: m[3] === "-" ? "" : m[3], ssid: m[4]}); return; }
   if (l.startsWith("#wifinet ")) {
     const m = l.match(/^#wifinet (-?\d+) (\d+) (\S+) (\d) (.*)$/);
-    if (m) wifiNets.push({rssi: +m[1], ch: +m[2], secured: m[3] === "secured", saved: m[4] === "1", ssid: m[5]});
+    if (m) wifiNets.push({rssi: +m[1], ch: +m[2], secured: m[3] !== "open", ent: m[3] === "enterprise", saved: m[4] === "1", ssid: m[5]});
     return;
   }
   if (l.startsWith("#pins ")) { onPins(kv(l)); return; }
+  if (l.startsWith("#health last_crash ")) { diag.crash = l.slice(19); renderDiag(); return; }
+  if (l.startsWith("#warn crash: ")) { diag.crash = l.slice(13); renderDiag(); }   // also logged + toast below
+  if (l.startsWith("#health ")) { onHealth(kv(l)); log(l, ""); return; }
+  if (l.startsWith("#info reset ")) { diag.reset = l.slice(6); renderDiag(); log(l, "note"); return; }
   if (l.startsWith("#ok") || l.startsWith("#err") || l === "z" || l === "Z") {
     const w = waiting.shift();
     if (w) { clearTimeout(w.t); if (!w.silent || l.startsWith("#err")) log(l, l.startsWith("#err") ? "err" : "okc"); w.resolve(l); }
@@ -428,6 +446,15 @@ function onStatus(s) {
 function onStats(s) {
   $("statsKv").innerHTML = Object.entries(s).map(([k, v]) => `<div><span>${esc(k)}</span> ${esc(v)}</div>`).join("");
 }
+let diag = {reset: "", crash: "", health: {}};
+function onHealth(s) { Object.assign(diag.health, s); renderDiag(); }
+function renderDiag() {
+  const rows = [];
+  if (diag.reset) rows.push(`<div><span>reset</span> ${esc(diag.reset)}</div>`);
+  if (diag.crash) rows.push(`<div><span>last crash</span> ${esc(diag.crash)}</div>`);
+  for (const [k, v] of Object.entries(diag.health)) rows.push(`<div><span>${esc(k)}</span> ${esc(v)}</div>`);
+  $("diagKv").innerHTML = rows.join("") || '<div class="muted">press "Refresh health"</div>';
+}
 function refreshAll() { cmd("#status", true); cmd("#stats", true); cmd("#rule list", true); }
 let tick = 0;
 setInterval(() => {
@@ -452,6 +479,9 @@ async function syncClock() {
   if (clk.src === "none") { await cmd("#time set " + Date.now(), true); await cmd("#time", true); }   // no NTP: use this browser's clock
 }
 setInterval(() => { if (connected) syncClock(); }, 60000);
+// keepalive: the device closes the least recently active connection when it runs out of sockets,
+// so an open page that only listens says something now and then
+setInterval(() => { if (connected) cmd("#ping", true); }, 20000);
 const devNowUs = () => clk.perf ? clk.boot + (performance.now() - clk.perf) * 1000 : lastDevUs;
 function wallOf(us) { return clk.epochOff !== null ? (us + clk.epochOff) / 1e6 : (us + (devOffsetUs || 0)) / 1e6; }
 function isoUtc(sec) {   // 2026-11-06T15:12:03.123456Z
@@ -891,6 +921,9 @@ function download(name, text) {
 
 // ---------- system ----------
 $("btnStatsReset").onclick = async () => { await cmd("#stats reset"); cmd("#stats", true); };
+$("btnHealth").onclick = () => cmd("#health", true);
+$("btnFlood").onclick = () => cmd(`#selftest flood ${parseInt($("floodFps").value) || 400} ${parseInt($("floodSecs").value) || 60}`);
+$("btnFloodStop").onclick = () => cmd("#selftest stop");
 $("btnBitrate").onclick = () => cmd("#bitrate " + $("bitrate").value);
 $("btnLimit").onclick = () => cmd("#limit " + $("limit").value);
 $("btnFmt").onclick = () => cmd("#format " + $("usbfmt").value);
@@ -917,7 +950,7 @@ async function refreshWifi() {
   if (!r.startsWith("#ok")) return;
   const box = $("wifiSaved");
   box.innerHTML = wifiSaved.length ? wifiSaved.map(n => `<div class="net${n.cur ? " cur" : ""}">
-      <span class="name">${esc(n.ssid)}</span>${n.cur ? '<span class="okc">connected</span>' : `<button data-c="${esc(n.ssid)}">Connect</button>`}
+      <span class="name">${esc(n.ssid)}</span>${n.ent ? `<span class="muted">enterprise: ${esc(n.user)}</span>` : ""}${n.rejected ? '<span class="err">login rejected</span>' : ""}${n.cur ? '<span class="okc">connected</span>' : `<button data-c="${esc(n.ssid)}">Connect</button>`}
       <button data-d="${esc(n.ssid)}">Delete</button></div>`).join("")
     : '<div class="net muted">no saved networks</div>';
 }
@@ -941,7 +974,7 @@ async function scan() {
     }
     $("scanInfo").textContent = `${wifiNets.length} networks`;
     $("wifiScan").innerHTML = wifiNets.map((n, i) => `<div class="net click" data-i="${i}">${bars(n.rssi)}
-        <span class="name">${esc(n.ssid)}</span>${n.saved ? '<span class="muted">saved</span>' : ""}
+        <span class="name">${esc(n.ssid)}</span>${n.ent ? '<span class="muted">enterprise</span>' : ""}${n.saved ? '<span class="muted">saved</span>' : ""}
         <span class="muted">ch ${n.ch}</span><span title="${n.secured ? "secured" : "open"}" class="muted">${n.secured ? ICON.lock : ""}</span></div>`).join("")
       || '<div class="net muted">no networks found</div>';
   } finally { scanning = false; }
@@ -953,20 +986,27 @@ $("wifiScan").onclick = async e => {
   joinNet = wifiNets[+d.dataset.i];
   if (joinNet.saved) { await cmd("#wifi connect " + q(joinNet.ssid)); setTimeout(refreshWifi, 500); return; }
   if (!joinNet.secured) { if (confirm(`Connect to open network "${joinNet.ssid}"?`)) join(joinNet.ssid, ""); return; }
-  $("joinSsid").textContent = joinNet.ssid; $("joinPass").value = ""; $("joinBox").hidden = false; $("joinPass").focus();
+  $("joinSsid").textContent = joinNet.ssid; $("joinPass").value = ""; $("joinUser").value = "";
+  $("joinUser").hidden = !joinNet.ent; $("joinBox").hidden = false;
+  (joinNet.ent ? $("joinUser") : $("joinPass")).focus();
 };
-async function join(ssid, pass) {
-  const r = await cmd(`#wifi add ${q(ssid)} ${q(pass)}`);
+async function join(ssid, pass, user) {
+  // sent "silent": the command contains the password and must not appear in the log view
+  const r = await cmd(`#wifi add ${q(ssid)} ${q(pass)}${user ? " " + q(user) : ""}`, true);
   if (r.startsWith("#err")) { toast(r); return; }
   $("joinBox").hidden = true;
   toast(`Saved "${ssid}", connecting… If you are connected via this WLAN, the page reconnects automatically.`);
   setTimeout(refreshWifi, 1500); setTimeout(refreshWifi, 6000);
 }
-$("btnJoin").onclick = () => join(joinNet.ssid, $("joinPass").value);
+$("btnJoin").onclick = () => {
+  const user = joinNet.ent ? $("joinUser").value.trim() : "";
+  if (joinNet.ent && !user) { toast("enterprise network: enter your username"); return; }
+  join(joinNet.ssid, $("joinPass").value, user);
+};
 $("joinPass").onkeydown = e => { if (e.key === "Enter") $("btnJoin").click(); };
 $("joinShow").onchange = () => $("joinPass").type = $("joinShow").checked ? "text" : "password";
 $("btnJoinCancel").onclick = () => $("joinBox").hidden = true;
-$("btnHid").onclick = () => { if ($("hidSsid").value) join($("hidSsid").value, $("hidPass").value); };
+$("btnHid").onclick = () => { if ($("hidSsid").value) join($("hidSsid").value, $("hidPass").value, $("hidUser").value.trim()); };
 
 // ---------- pins ----------
 function onPins(p) {
@@ -988,7 +1028,6 @@ $("btnFw").onclick = () => {
   const file = $("fwFile").files[0];
   if (!file) { toast("choose a firmware .bin first"); return; }
   if (!confirm(`Flash ${file.name} (${(file.size / 1024).toFixed(0)} KB)? The bus switches to LISTEN, then the device reboots.`)) return;
-  const fd = new FormData(); fd.append("firmware", file, file.name);
   const x = new XMLHttpRequest();
   $("fwProg").hidden = false; $("fwInfo").textContent = "uploading...";
   x.upload.onprogress = e => { if (e.lengthComputable) $("fwProg").value = 100 * e.loaded / e.total; };
@@ -999,7 +1038,8 @@ $("btnFw").onclick = () => {
     if (ok) reloadOnReconnect = true;   // connect() reloads the page as soon as the new firmware answers
   };
   x.onerror = () => { $("fwInfo").textContent = "upload error"; $("fwInfo").className = "err"; };
-  x.open("POST", "/update"); x.send(fd);
+  // the image as the raw request body (the device checks it before writing anything)
+  x.open("POST", "/update"); x.setRequestHeader("Content-Type", "application/octet-stream"); x.send(file);
 };
 $("btnCmd").onclick = runConsole;
 $("cmd").onkeydown = e => {
@@ -1057,7 +1097,7 @@ $("tabs").onclick = e => {
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("cur", x === b));
   document.querySelectorAll("section").forEach(s => s.classList.toggle("cur", s.id === "t-" + curTab));
   liveDirty = true;
-  if (curTab === "sys") { cmd("#stats", true); cmd("#pins", true); refreshWifi(); }
+  if (curTab === "sys") { cmd("#stats", true); cmd("#pins", true); cmd("#health", true); refreshWifi(); }
   if (curTab === "rules") cmd("#rule list", true);
 };
 $("btnPause").onclick = () => { paused = !paused; $("btnPause").textContent = paused ? "Resume" : "Pause"; liveDirty = true; };

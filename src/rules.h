@@ -2,7 +2,7 @@
 // actions (own high-priority task, ~0.1 ms resolution), NVS save/load and the "#rule" command.
 #pragma once
 
-#include <Arduino.h>
+#include <stdint.h>
 
 #include "can_frame.h"
 

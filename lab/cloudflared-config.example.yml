@@ -1,0 +1,11 @@
+# /etc/cloudflared/config.yml  (tunnel created with: cloudflared tunnel create can-lab)
+tunnel: can-lab
+credentials-file: /home/pi/.cloudflared/<TUNNEL-ID>.json
+ingress:
+  - hostname: canlab.example.com        # MCP server + job page (secret path inside)
+    service: http://127.0.0.1:8765
+  - hostname: can.example.com           # ESP32 web UI - protect with Cloudflare Access!
+    service: http://10.240.8.42:80
+  - hostname: ssh-pi.example.com        # SSH to the Pi (cloudflared access ssh on the client)
+    service: ssh://localhost:22
+  - service: http_status:404
